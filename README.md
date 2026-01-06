@@ -32,6 +32,8 @@ The system implements temporality at three levels:
 
 ## Quick Start
 
+**TL;DR**: See [QUICKSTART.md](QUICKSTART.md) for a 15-minute setup guide.
+
 ### 1. Prerequisites
 
 - Docker and Docker Compose
@@ -221,9 +223,98 @@ The complete hybrid retrieval system with temporal awareness is now operational:
 - Temporal queries filtering properly: ✅
 - Context expansion enriching results: ✅
 
-### ⏳ Phase 4: RAG System (NOT STARTED)
+### ✅ Phase 4: RAG System (COMPLETED)
 
-### ⏳ Phase 5: Web Interfaces (NOT STARTED)
+The complete RAG system with both LangChain and LangGraph implementations is now operational:
+
+**Prompt Engineering:**
+- ✅ Comprehensive prompt templates for different query types
+- ✅ System prompts with temporal awareness
+- ✅ Factual, temporal, comparison, evolution, and exploratory prompts
+- ✅ Source citation formatting
+- ✅ Context and entity relationship formatting
+
+**Context Building:**
+- ✅ Context assembly from retrieval results
+- ✅ Metadata enrichment (sources, entities, temporal info)
+- ✅ Context truncation and summarization
+- ✅ Conversation history integration
+- ✅ Prompt template selection based on query type
+
+**LangChain RAG Chain:**
+- ✅ Simple RAG chain implementation
+- ✅ Temporal detection integration
+- ✅ Context expansion
+- ✅ Conversation history support
+- ✅ Streaming response capability
+- ✅ Error handling and fallbacks
+
+**LangGraph Workflow:**
+- ✅ Multi-node RAG pipeline with 5 stages
+- ✅ Node 1: Query understanding (temporal, entities, query type)
+- ✅ Node 2: Retrieval (hybrid search with temporal filtering)
+- ✅ Node 3: Context building (formatting with metadata)
+- ✅ Node 4: Generation (LLM answer with appropriate prompts)
+- ✅ Node 5: Verification (quality checks and validation)
+- ✅ State management across workflow
+- ✅ Dynamic prompt selection based on query characteristics
+
+**Testing Tools:**
+- ✅ `scripts/test_rag.py` - Comprehensive RAG testing suite
+- ✅ Demo mode with example queries
+- ✅ Comparison tools for LangChain vs LangGraph
+- ✅ Streaming response testing
+- ✅ Conversation history testing
+
+**Validation:**
+- RAG chain generates relevant answers: ✅
+- LangGraph workflow processes queries correctly: ✅
+- Source citations working properly: ✅
+- Temporal queries handled correctly: ✅
+- Different query types use appropriate prompts: ✅
+- Verification checks functioning: ✅
+
+### ✅ Phase 5: Web Interfaces (COMPLETED)
+
+Three comprehensive Streamlit applications for interacting with the temporal knowledge graph:
+
+**Graph Visualization Explorer:**
+- ✅ Interactive graph exploration with streamlit-agraph
+- ✅ Database statistics dashboard
+- ✅ Entity search and neighborhood visualization
+- ✅ Document explorer with chunk relationships
+- ✅ Temporal filtering controls (point-in-time, date ranges)
+- ✅ Custom Cypher query interface
+- ✅ Graph export to JSON
+
+**Chunk Retrieval Interface:**
+- ✅ Multiple search strategies (Vector, Graph, Hybrid, Temporal)
+- ✅ Search method comparison tool
+- ✅ Result highlighting with query terms
+- ✅ Temporal and entity filtering
+- ✅ Performance metrics display
+- ✅ Advanced options (similarity threshold, alpha weighting)
+- ✅ Result export functionality
+
+**RAG Chatbot:**
+- ✅ Conversational chat interface
+- ✅ Both LangGraph and LangChain implementations
+- ✅ Streaming response support
+- ✅ Source citations with expandable details
+- ✅ Conversation history management
+- ✅ Temporal query detection indicators
+- ✅ Entity extraction display
+- ✅ Answer verification warnings
+- ✅ Quick query buttons
+- ✅ Conversation export
+
+**Validation:**
+- All three apps launch successfully: ✅
+- Graph visualization renders correctly: ✅
+- Search retrieves and displays results: ✅
+- Chatbot provides coherent answers with sources: ✅
+- Temporal filtering works across all interfaces: ✅
+- UI is intuitive and responsive: ✅
 
 ### ⏳ Phase 6: Testing & Documentation (NOT STARTED)
 
@@ -446,6 +537,112 @@ context_summary = ce.build_context_summary(expanded)
 print(context_summary)
 ```
 
+### RAG System
+
+```bash
+# Test RAG system with demo
+python scripts/test_rag.py --demo
+
+# Test LangChain RAG with custom query
+python scripts/test_rag.py --query "What is artificial intelligence?" --method langchain
+
+# Test LangGraph RAG with temporal query
+python scripts/test_rag.py --query "AI developments in 2023" --method langgraph --temporal
+
+# Compare both implementations
+python scripts/test_rag.py --query "machine learning" --compare
+
+# Test streaming response
+python scripts/test_rag.py --query "climate change" --stream
+
+# Run conversation demo
+python scripts/test_rag.py --conversation-demo
+```
+
+### Programmatic RAG Usage
+
+```python
+from temporal_kg_rag.rag.chain import get_rag_chain
+from temporal_kg_rag.rag.graph import get_rag_graph
+
+# LangChain RAG Chain
+chain = get_rag_chain()
+result = chain.query(
+    "What is quantum computing?",
+    top_k=5,
+    use_temporal_detection=True,
+    expand_context=True,
+)
+
+print(result["answer"])
+print(f"Sources: {len(result['sources'])}")
+
+# With conversation history
+history = [
+    {"role": "user", "content": "What is AI?"},
+    {"role": "assistant", "content": "AI is..."},
+]
+result = chain.query_with_history(
+    "When was it developed?",
+    conversation_history=history,
+    top_k=5,
+)
+
+# Streaming response
+for chunk in chain.stream_query("Explain neural networks", top_k=5):
+    print(chunk, end="", flush=True)
+
+# LangGraph RAG Workflow
+graph = get_rag_graph()
+result = graph.query("Compare AI and ML", top_k=10)
+
+print(result["answer"])
+print(f"Query type: {result['metadata']['query_type']}")
+print(f"Temporal detected: {result['metadata']['temporal_detected']}")
+print(f"Verified: {result['metadata']['verified']}")
+```
+
+### Web Applications
+
+The project includes three Streamlit applications for easy interaction with the system:
+
+```bash
+# Quick start - run all apps at once
+./scripts/run_all_apps.sh
+
+# Or run individually:
+streamlit run apps/1_graph_visualization.py                    # Port 8501
+streamlit run apps/2_chunk_retrieval.py --server.port 8502     # Port 8502
+streamlit run apps/3_chatbot.py --server.port 8503              # Port 8503
+
+# Stop all apps
+./scripts/stop_all_apps.sh
+```
+
+**Application 1: Graph Visualization Explorer** (Port 8501)
+- Explore the temporal knowledge graph interactively
+- Search and visualize entity neighborhoods
+- View document structures and chunk relationships
+- Export graph data
+- Execute custom Cypher queries
+
+**Application 2: Chunk Retrieval Interface** (Port 8502)
+- Test different retrieval strategies (Vector, Graph, Hybrid, Temporal)
+- Compare search methods side-by-side
+- Apply temporal and entity filters
+- View performance metrics
+- Export search results
+
+**Application 3: RAG Chatbot** (Port 8503)
+- Chat interface with conversation history
+- Choose between LangGraph and LangChain implementations
+- View source citations for all answers
+- See temporal context and entity detection
+- Export conversations
+- Streaming responses (LangChain mode)
+
+See [apps/README.md](apps/README.md) for detailed documentation.
+
 ### Using Configuration
 
 ```python
@@ -548,8 +745,8 @@ pip install -e .
 - [x] Phase 1: Foundation and core infrastructure
 - [x] Phase 2: Document ingestion pipeline
 - [x] Phase 3: Hybrid retrieval system
-- [ ] Phase 4: RAG workflow with LangGraph
-- [ ] Phase 5: Streamlit web interfaces
+- [x] Phase 4: RAG workflow with LangGraph
+- [x] Phase 5: Streamlit web interfaces
 - [ ] Phase 6: Testing and optimization
 
 ## License
@@ -569,4 +766,4 @@ For issues and questions:
 
 ---
 
-**Status**: Phases 1-3 Complete ✅✅✅ | Last Updated: 2026-01-06
+**Status**: Phases 1-5 Complete ✅✅✅✅✅ | Last Updated: 2026-01-06
