@@ -11,10 +11,10 @@ if [ ! -d "apps" ]; then
     exit 1
 fi
 
-# Check if streamlit is installed
-if ! command -v streamlit &> /dev/null; then
-    echo "❌ Error: Streamlit is not installed"
-    echo "Please install dependencies: pip install -r requirements.txt"
+# Check if uv is installed
+if ! command -v uv &> /dev/null; then
+    echo "❌ Error: uv is not installed"
+    echo "Please install uv: https://docs.astral.sh/uv/"
     exit 1
 fi
 
@@ -49,7 +49,7 @@ mkdir -p logs
 
 # Launch apps in background with logging
 echo "Starting Graph Visualization..."
-nohup streamlit run apps/1_graph_visualization.py \
+nohup uv run streamlit run apps/1_graph_visualization.py \
     --server.port 8501 \
     --server.headless true \
     > logs/graph_visualization.log 2>&1 &
@@ -58,7 +58,7 @@ echo $! > logs/graph_viz.pid
 sleep 2
 
 echo "Starting Chunk Retrieval..."
-nohup streamlit run apps/2_chunk_retrieval.py \
+nohup uv run streamlit run apps/2_chunk_retrieval.py \
     --server.port 8502 \
     --server.headless true \
     > logs/chunk_retrieval.log 2>&1 &
@@ -67,7 +67,7 @@ echo $! > logs/chunk_retrieval.pid
 sleep 2
 
 echo "Starting RAG Chatbot..."
-nohup streamlit run apps/3_chatbot.py \
+nohup uv run streamlit run apps/3_chatbot.py \
     --server.port 8503 \
     --server.headless true \
     > logs/chatbot.log 2>&1 &

@@ -61,7 +61,7 @@ def main():
     logger.info("=" * 60)
     logger.info(f"Neo4j URI: {settings.neo4j_uri}")
     logger.info(f"Neo4j Database: {settings.neo4j_database}")
-    logger.info(f"Embedding Dimensions: {settings.openai_embedding_dimensions}")
+    logger.info(f"Embedding Dimensions: {settings.embedding_dimensions}")
 
     # Create Neo4j client
     client = None

@@ -36,24 +36,18 @@ class GraphOperations:
         Returns:
             Created document
         """
+        # Get document properties (already flattened by to_neo4j_dict)
+        doc_props = document.to_neo4j_dict()
+
         query = """
-        CREATE (d:Document {
-            id: $id,
-            title: $title,
-            source: $source,
-            content_type: $content_type,
-            file_path: $file_path,
-            created_at: $created_at,
-            updated_at: $updated_at,
-            version: $version,
-            metadata: $metadata
-        })
+        CREATE (d:Document)
+        SET d = $props
         RETURN d
         """
 
         result = self.client.execute_write_transaction(
             query,
-            document.to_neo4j_dict(),
+            {"props": doc_props},
         )
 
         logger.info(f"Created document: {document.title} (ID: {document.id})")
@@ -90,25 +84,14 @@ class GraphOperations:
             Created chunk
         """
         query = """
-        CREATE (c:Chunk {
-            id: $id,
-            text: $text,
-            embedding: $embedding,
-            chunk_index: $chunk_index,
-            token_count: $token_count,
-            created_at: $created_at,
-            updated_at: $updated_at,
-            version: $version,
-            is_current: $is_current,
-            superseded_at: $superseded_at,
-            metadata: $metadata
-        })
+        CREATE (c:Chunk)
+        SET c = $props
         RETURN c
         """
 
         result = self.client.execute_write_transaction(
             query,
-            chunk.to_neo4j_dict(),
+            {"props": chunk.to_neo4j_dict()},
         )
 
         logger.debug(f"Created chunk: {chunk.id} (index: {chunk.chunk_index})")
@@ -319,19 +302,8 @@ class GraphOperations:
         # Create chunks
         query = """
         UNWIND $chunks AS chunk_data
-        CREATE (c:Chunk {
-            id: chunk_data.id,
-            text: chunk_data.text,
-            embedding: chunk_data.embedding,
-            chunk_index: chunk_data.chunk_index,
-            token_count: chunk_data.token_count,
-            created_at: chunk_data.created_at,
-            updated_at: chunk_data.updated_at,
-            version: chunk_data.version,
-            is_current: chunk_data.is_current,
-            superseded_at: chunk_data.superseded_at,
-            metadata: chunk_data.metadata
-        })
+        CREATE (c:Chunk)
+        SET c = chunk_data
         WITH c
         MATCH (d:Document {id: $document_id})
         MERGE (d)-[:HAS_CHUNK {created_at: datetime()}]->(c)
@@ -387,13 +359,14 @@ class GraphOperations:
             UNWIND $mentions AS mention_data
             MATCH (c:Chunk {id: mention_data.chunk_id})
             MATCH (e:Entity {id: mention_data.entity_id})
-            MERGE (c)-[m:MENTIONS {
-                position: mention_data.position,
-                confidence: mention_data.confidence,
-                context: mention_data.context,
-                valid_from: mention_data.valid_from,
-                valid_to: mention_data.valid_to
-            }]->(e)
+            MERGE (c)-[m:MENTIONS]->(e)
+            SET m.position = mention_data.position,
+                m.confidence = mention_data.confidence,
+                m.context = mention_data.context,
+                m.valid_from = mention_data.valid_from
+            SET m.valid_to = CASE WHEN mention_data.valid_to IS NOT NULL
+                                 THEN mention_data.valid_to
+                                 ELSE null END
             """
 
             mentions_data = []

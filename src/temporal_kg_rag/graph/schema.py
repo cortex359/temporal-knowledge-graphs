@@ -1,6 +1,6 @@
 """Neo4j schema initialization and management."""
 
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 from temporal_kg_rag.graph.neo4j_client import Neo4jClient, get_neo4j_client
 from temporal_kg_rag.config.settings import get_settings
@@ -159,7 +159,7 @@ def create_vector_index(client: Neo4jClient) -> None:
         client: Neo4j client instance
     """
     settings = get_settings()
-    dimensions = settings.openai_embedding_dimensions
+    dimensions = settings.embedding_dimensions
 
     # Check if vector index already exists
     check_query = """

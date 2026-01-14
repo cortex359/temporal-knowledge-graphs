@@ -1,5 +1,6 @@
 """Entity data model."""
 
+import json
 from datetime import datetime
 from typing import Any, Dict, Optional
 from uuid import uuid4
@@ -40,20 +41,48 @@ class Entity(BaseModel):
 
     def to_neo4j_dict(self) -> Dict[str, Any]:
         """Convert entity to Neo4j-compatible dictionary."""
-        return {
+        result = {
             "id": self.id,
             "name": self.name,
             "type": self.type,
             "first_seen": self.first_seen,
             "last_seen": self.last_seen,
             "mention_count": self.mention_count,
-            "metadata": self.metadata,
         }
+
+        # Flatten metadata into meta_* properties to avoid nested dict issues
+        if self.metadata:
+            for key, value in self.metadata.items():
+                if isinstance(value, (str, int, float, bool)):
+                    result[f"meta_{key}"] = value
+                elif value is not None:
+                    result[f"meta_{key}"] = str(value)
+
+            # Store full metadata as JSON string
+            result["metadata_json"] = json.dumps(self.metadata)
+
+        return result
 
     @classmethod
     def from_neo4j_dict(cls, data: Dict[str, Any]) -> "Entity":
         """Create Entity from Neo4j query result."""
-        return cls(**data)
+        # Reconstruct metadata from JSON if present
+        metadata = {}
+        if "metadata_json" in data:
+            try:
+                metadata = json.loads(data["metadata_json"])
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        # Remove flattened meta_* properties and metadata_json from data
+        clean_data = {
+            k: v
+            for k, v in data.items()
+            if not k.startswith("meta_") and k != "metadata_json"
+        }
+        clean_data["metadata"] = metadata
+
+        return cls(**clean_data)
 
     def update_last_seen(self) -> None:
         """Update the last_seen timestamp to current time."""

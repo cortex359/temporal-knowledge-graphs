@@ -19,7 +19,7 @@ Interactive exploration of the temporal knowledge graph.
 
 **How to run:**
 ```bash
-streamlit run apps/1_graph_visualization.py
+uv run streamlit run apps/1_graph_visualization.py
 ```
 
 **Access:** http://localhost:8501
@@ -45,7 +45,7 @@ Search and retrieve text chunks using different strategies.
 
 **How to run:**
 ```bash
-streamlit run apps/2_chunk_retrieval.py
+uv run streamlit run apps/2_chunk_retrieval.py
 ```
 
 **Access:** http://localhost:8502
@@ -72,7 +72,7 @@ Conversational interface with the complete RAG system.
 
 **How to run:**
 ```bash
-streamlit run apps/3_chatbot.py
+uv run streamlit run apps/3_chatbot.py
 ```
 
 **Access:** http://localhost:8503
@@ -85,35 +85,32 @@ You can run all three applications simultaneously:
 
 ```bash
 # Terminal 1
-streamlit run apps/1_graph_visualization.py --server.port 8501
+uv run streamlit run apps/1_graph_visualization.py --server.port 8501
 
 # Terminal 2
-streamlit run apps/2_chunk_retrieval.py --server.port 8502
+uv run streamlit run apps/2_chunk_retrieval.py --server.port 8502
 
 # Terminal 3
-streamlit run apps/3_chatbot.py --server.port 8503
+uv run streamlit run apps/3_chatbot.py --server.port 8503
 ```
 
 Or use a process manager like `tmux` or `screen`:
 
 ```bash
 # Using tmux
-tmux new-session -d -s streamlit1 'streamlit run apps/1_graph_visualization.py'
-tmux new-session -d -s streamlit2 'streamlit run apps/2_chunk_retrieval.py --server.port 8502'
-tmux new-session -d -s streamlit3 'streamlit run apps/3_chatbot.py --server.port 8503'
+tmux new-session -d -s streamlit1 'uv run streamlit run apps/1_graph_visualization.py'
+tmux new-session -d -s streamlit2 'uv run streamlit run apps/2_chunk_retrieval.py --server.port 8502'
+tmux new-session -d -s streamlit3 'uv run streamlit run apps/3_chatbot.py --server.port 8503'
 ```
 
 ## Prerequisites
 
 1. **Neo4j Database** must be running:
    ```bash
-   docker-compose up -d neo4j
+   docker-compose up -d
    ```
 
-2. **LiteLLM Proxy** must be configured and running:
-   ```bash
-   docker-compose up -d litellm
-   ```
+2. **External LiteLLM Service** must be configured and accessible (configured in `.env`)
 
 3. **Documents ingested** into the knowledge graph:
    ```bash
@@ -125,8 +122,10 @@ tmux new-session -d -s streamlit3 'streamlit run apps/3_chatbot.py --server.port
    ```bash
    NEO4J_URI=bolt://localhost:7687
    NEO4J_PASSWORD=password
-   OPENAI_API_KEY=sk-your-key
-   LITELLM_API_BASE=http://localhost:4000
+   LITELLM_API_BASE=http://your-litellm-url:4000
+   LITELLM_API_KEY=your-litellm-api-key
+   EMBEDDING_MODEL=Qwen/Qwen3-Embedding-8B
+   EMBEDDING_DIMENSIONS=4096
    ```
 
 ## Configuration
@@ -189,8 +188,8 @@ If you get import errors:
 # Ensure you're in the project root
 cd /path/to/temporal-knowledge-graphs
 
-# Install dependencies
-pip install -r requirements.txt
+# Install dependencies with uv
+uv pip install -r requirements.txt
 
 # Add src to PYTHONPATH
 export PYTHONPATH="${PYTHONPATH}:$(pwd)/src"
@@ -201,7 +200,7 @@ export PYTHONPATH="${PYTHONPATH}:$(pwd)/src"
 If ports are already in use, specify different ports:
 
 ```bash
-streamlit run apps/1_graph_visualization.py --server.port 9501
+uv run streamlit run apps/1_graph_visualization.py --server.port 9501
 ```
 
 ### Performance Issues
@@ -280,4 +279,4 @@ For issues:
 
 ---
 
-**Last Updated:** 2026-01-06
+**Last Updated:** 2026-01-13

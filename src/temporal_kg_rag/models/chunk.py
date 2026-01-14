@@ -1,5 +1,6 @@
 """Chunk data model."""
 
+import json
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
@@ -52,6 +53,9 @@ class Chunk(BaseModel):
         """
         Convert chunk to Neo4j-compatible dictionary.
 
+        Neo4j doesn't support nested dictionaries as properties,
+        so we convert metadata to JSON string and flatten nested dicts.
+
         Args:
             include_embedding: Whether to include the embedding vector
 
@@ -68,18 +72,48 @@ class Chunk(BaseModel):
             "version": self.version,
             "is_current": self.is_current,
             "superseded_at": self.superseded_at,
-            "metadata": self.metadata,
         }
 
         if include_embedding and self.embedding:
             data["embedding"] = self.embedding
 
+        # Add metadata as a JSON string if it exists and is not empty
+        if self.metadata:
+            # Flatten nested metadata into top-level properties with prefix
+            for key, value in self.metadata.items():
+                # Only add primitive types or convert complex types to string
+                if isinstance(value, (str, int, float, bool)):
+                    data[f"meta_{key}"] = value
+                elif value is not None:
+                    data[f"meta_{key}"] = str(value)
+
+            # Also store the full metadata as JSON for complete preservation
+            data["metadata_json"] = json.dumps(self.metadata)
+
         return data
 
     @classmethod
     def from_neo4j_dict(cls, data: Dict[str, Any]) -> "Chunk":
-        """Create Chunk from Neo4j query result."""
-        return cls(**data)
+        """
+        Create Chunk from Neo4j query result.
+
+        Reconstructs metadata from JSON string if available.
+        """
+        # Extract the metadata JSON if it exists
+        metadata = {}
+        if "metadata_json" in data:
+            try:
+                metadata = json.loads(data["metadata_json"])
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        # Remove metadata-related fields from data
+        clean_data = {k: v for k, v in data.items() if not k.startswith("meta_") and k != "metadata_json"}
+
+        # Add reconstructed metadata
+        clean_data["metadata"] = metadata
+
+        return cls(**clean_data)
 
     def supersede(self) -> None:
         """Mark this chunk as superseded by a new version."""

@@ -3,7 +3,6 @@
 import re
 from typing import List, Optional
 
-import nltk
 import tiktoken
 
 from temporal_kg_rag.config.settings import get_settings
@@ -12,12 +11,19 @@ from temporal_kg_rag.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# Download NLTK data if not already present
+# Try to import nltk, but don't fail if it's not available
 try:
-    nltk.data.find("tokenizers/punkt")
-except LookupError:
-    logger.info("Downloading NLTK punkt tokenizer...")
-    nltk.download("punkt", quiet=True)
+    import nltk
+    # Try to use punkt tokenizer
+    try:
+        nltk.data.find("tokenizers/punkt_tab")
+        NLTK_AVAILABLE = True
+    except LookupError:
+        logger.warning("NLTK punkt tokenizer not found, will use simple sentence splitter")
+        NLTK_AVAILABLE = False
+except ImportError:
+    logger.warning("NLTK not available, will use simple sentence splitter")
+    NLTK_AVAILABLE = False
 
 
 class Chunker:
@@ -83,7 +89,11 @@ class Chunker:
             List of Chunk objects
         """
         # Split text into sentences
-        sentences = nltk.sent_tokenize(text)
+        if NLTK_AVAILABLE:
+            sentences = nltk.sent_tokenize(text)
+        else:
+            # Simple sentence splitter as fallback
+            sentences = self._simple_sentence_split(text)
 
         chunks = []
         current_chunk = []
@@ -154,6 +164,21 @@ class Chunker:
         )
 
         return chunks
+
+    def _simple_sentence_split(self, text: str) -> List[str]:
+        """
+        Simple sentence splitter as fallback when NLTK is not available.
+
+        Args:
+            text: Text to split
+
+        Returns:
+            List of sentences
+        """
+        # Split on common sentence endings
+        # This is simpler than NLTK but works reasonably well
+        sentences = re.split(r'(?<=[.!?])\s+', text)
+        return [s.strip() for s in sentences if s.strip()]
 
     def _chunk_fixed(self, text: str, document_id: Optional[str]) -> List[Chunk]:
         """

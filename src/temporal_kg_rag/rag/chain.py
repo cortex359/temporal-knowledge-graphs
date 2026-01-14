@@ -2,7 +2,7 @@
 
 from typing import Dict, List, Optional
 
-from langchain.schema import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 
 from temporal_kg_rag.config.settings import get_settings

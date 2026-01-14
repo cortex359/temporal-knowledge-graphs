@@ -2,7 +2,7 @@
 
 from typing import Dict, List, Optional, TypedDict
 
-from langchain.schema import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, StateGraph
 

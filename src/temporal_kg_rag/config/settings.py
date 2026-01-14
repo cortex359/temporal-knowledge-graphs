@@ -23,21 +23,20 @@ class Settings(BaseSettings):
     neo4j_password: str = Field(default="password", description="Neo4j password")
     neo4j_database: str = Field(default="neo4j", description="Neo4j database name")
 
-    # OpenAI Configuration
-    openai_api_key: str = Field(description="OpenAI API key")
-    openai_embedding_model: str = Field(
-        default="text-embedding-3-small", description="OpenAI embedding model"
-    )
-    openai_embedding_dimensions: int = Field(
-        default=1536, description="Embedding vector dimensions"
-    )
-
-    # LiteLLM Configuration
+    # LiteLLM Configuration (for both LLM and embeddings)
     litellm_api_base: str = Field(
         default="http://localhost:4000", description="LiteLLM proxy URL"
     )
     litellm_api_key: str = Field(default="sk-1234", description="LiteLLM API key")
     default_llm_model: str = Field(default="default", description="Default LLM model name")
+
+    # Embedding Configuration (via LiteLLM)
+    embedding_model: str = Field(
+        default="Qwen/Qwen3-Embedding-8B", description="Embedding model name"
+    )
+    embedding_dimensions: int = Field(
+        default=4096, description="Embedding vector dimensions"
+    )
 
     # Application Configuration
     chunk_size: int = Field(default=1000, description="Text chunk size in tokens")
@@ -77,9 +76,6 @@ class Settings(BaseSettings):
         default="0.0.0.0", description="Streamlit server address"
     )
 
-    # SpaCy Configuration
-    spacy_model: str = Field(default="en_core_web_sm", description="SpaCy NER model")
-
     # Batch Processing
     embedding_batch_size: int = Field(
         default=100, description="Batch size for embedding generation"
@@ -104,12 +100,13 @@ class Settings(BaseSettings):
             "database": self.neo4j_database,
         }
 
-    def get_openai_config(self) -> dict:
-        """Get OpenAI configuration as a dictionary."""
+    def get_embedding_config(self) -> dict:
+        """Get embedding configuration as a dictionary."""
         return {
-            "api_key": self.openai_api_key,
-            "model": self.openai_embedding_model,
-            "dimensions": self.openai_embedding_dimensions,
+            "api_base": self.litellm_api_base,
+            "api_key": self.litellm_api_key,
+            "model": self.embedding_model,
+            "dimensions": self.embedding_dimensions,
         }
 
     def get_litellm_config(self) -> dict:

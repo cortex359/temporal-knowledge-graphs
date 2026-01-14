@@ -32,14 +32,14 @@ The system implements temporality at three levels:
 
 ## Quick Start
 
-**TL;DR**: See [QUICKSTART.md](QUICKSTART.md) for a 15-minute setup guide.
+**TL;DR**: See [QUICKSTART.md](QUICKSTART.md) for a 13-minute setup guide.
 
 ### 1. Prerequisites
 
 - Docker and Docker Compose
 - Python 3.10 or higher
-- OpenAI API key
-- LiteLLM Proxy running (or use the included Docker setup)
+- External LiteLLM service (for LLM and embeddings)
+- `uv` package manager (install: `curl -LsSf https://astral.sh/uv/install.sh | sh`)
 
 ### 2. Clone and Setup
 
@@ -61,36 +61,35 @@ NEO4J_URI=bolt://localhost:7687
 NEO4J_USER=neo4j
 NEO4J_PASSWORD=password
 
-# OpenAI
-OPENAI_API_KEY=sk-your-key-here
+# LiteLLM (external service for both LLM and embeddings)
+LITELLM_API_BASE=http://your-litellm-url:4000
+LITELLM_API_KEY=your-litellm-api-key
 
-# LiteLLM (configure based on your setup)
-LITELLM_API_BASE=http://localhost:4000
-LITELLM_API_KEY=sk-1234
+# Embedding Configuration (via LiteLLM)
+EMBEDDING_MODEL=Qwen/Qwen3-Embedding-8B
+EMBEDDING_DIMENSIONS=4096
 ```
 
 ### 3. Start Services
 
 ```bash
-# Start Neo4j and LiteLLM
+# Start Neo4j
 docker-compose up -d
 
 # Wait for Neo4j to be ready (check http://localhost:7474)
 # Default credentials: neo4j/password
 ```
 
+**Note**: Make sure your external LiteLLM service is running and accessible.
+
 ### 4. Install Python Dependencies
 
 ```bash
-# Create virtual environment
-python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+# Install uv if not already installed
+curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Install dependencies
-pip install -r requirements.txt
-
-# Download spaCy model for entity extraction
-python -m spacy download en_core_web_sm
+# Install dependencies with uv
+uv pip install -r requirements.txt
 ```
 
 ### 5. Initialize Database
@@ -113,7 +112,8 @@ python scripts/init_db.py --show-schema
 The foundation is complete with:
 
 **Infrastructure:**
-- ✅ Docker Compose setup with Neo4j and LiteLLM
+- ✅ Docker Compose setup with Neo4j
+- ✅ External LiteLLM integration for LLM and embeddings
 - ✅ Environment configuration (.env.example)
 - ✅ Project structure with proper package layout
 
@@ -125,9 +125,9 @@ The foundation is complete with:
 - ✅ Data models (Document, Chunk, Entity, Temporal)
 
 **Validation:**
-- Neo4j services running: ✅
+- Neo4j service running: ✅
 - Schema initialized: ✅
-- Vector index created (1536 dimensions): ✅
+- Vector index created (4096 dimensions): ✅
 - Python imports working: ✅
 
 ### ✅ Phase 2: Document Ingestion (COMPLETED)
@@ -141,15 +141,16 @@ The complete document ingestion pipeline is now operational:
 - ✅ Token counting with tiktoken
 
 **Embeddings:**
-- ✅ OpenAI embedding generation with batch processing
+- ✅ LiteLLM embedding generation with batch processing (Qwen/Qwen3-Embedding-8B, 4096 dimensions)
 - ✅ File-based embedding cache to avoid redundant API calls
 - ✅ Automatic retry logic for API failures
-- ✅ Cost estimation
+- ✅ HTTP-based API client with httpx
 
 **Entity Extraction:**
-- ✅ spaCy NER integration (PERSON, ORG, LOCATION, etc.)
+- ✅ LLM-based NER via LiteLLM (PERSON, ORG, LOCATION, etc.)
 - ✅ Entity deduplication and aggregation
 - ✅ Entity mention tracking with context
+- ✅ JSON-based entity extraction with context
 
 **Graph Operations:**
 - ✅ CRUD operations for documents, chunks, and entities
@@ -766,4 +767,4 @@ For issues and questions:
 
 ---
 
-**Status**: Phases 1-5 Complete ✅✅✅✅✅ | Last Updated: 2026-01-06
+**Status**: Phases 1-5 Complete ✅✅✅✅✅ | Using uv + LiteLLM (Qwen embeddings) | Last Updated: 2026-01-13

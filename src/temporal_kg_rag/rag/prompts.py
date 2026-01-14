@@ -173,9 +173,9 @@ Provide your verification assessment:"""
                 entities = result["entities"]
                 if entities:
                     if isinstance(entities[0], dict):
-                        entity_names = [e.get("name", str(e)) for e in entities[:5]]
+                        entity_names = [e.get("name", str(e)) for e in entities[:5] if e.get("name")]
                     else:
-                        entity_names = entities[:5] if isinstance(entities, list) else []
+                        entity_names = [e for e in (entities[:5] if isinstance(entities, list) else []) if e]
                     if entity_names:
                         context_parts.append(f"Key entities: {', '.join(entity_names)}")
 

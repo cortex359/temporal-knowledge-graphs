@@ -57,10 +57,11 @@ def print_results(results: list, title: str, max_results: int = 3):
         if 'entities' in result and result['entities']:
             entity_list = result['entities']
             if isinstance(entity_list[0], dict):
-                entity_names = [e.get('name', str(e)) for e in entity_list[:5]]
+                entity_names = [e.get('name', str(e)) for e in entity_list[:5] if e.get('name')]
             else:
-                entity_names = entity_list[:5]
-            print(f"Entities: {', '.join(entity_names)}")
+                entity_names = [e for e in entity_list[:5] if e]
+            if entity_names:
+                print(f"Entities: {', '.join(entity_names)}")
 
     print(f"\nTotal results: {len(results)}")
 

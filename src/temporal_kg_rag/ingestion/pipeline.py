@@ -232,14 +232,6 @@ class IngestionPipeline:
         if texts_to_embed:
             logger.info(f"  Generating {len(texts_to_embed)} new embeddings...")
 
-            # Estimate cost
-            avg_tokens = sum(chunk.token_count for chunk in chunks) / len(chunks)
-            estimated_cost = self.embedding_generator.estimate_cost(
-                len(texts_to_embed),
-                int(avg_tokens),
-            )
-            logger.info(f"  Estimated cost: ${estimated_cost:.4f}")
-
             # Generate embeddings
             new_embeddings = self.embedding_generator.generate_embeddings(texts_to_embed)
 

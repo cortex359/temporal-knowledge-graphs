@@ -1,10 +1,9 @@
-"""Embedding generation using OpenAI API."""
+"""Embedding generation using LiteLLM API."""
 
 import asyncio
 from typing import List, Optional
 
-import openai
-from openai import OpenAI
+import httpx
 from tenacity import (
     retry,
     stop_after_attempt,
@@ -19,10 +18,11 @@ logger = get_logger(__name__)
 
 
 class EmbeddingGenerator:
-    """Generate embeddings using OpenAI API with batching and retry logic."""
+    """Generate embeddings using LiteLLM API with batching and retry logic."""
 
     def __init__(
         self,
+        api_base: Optional[str] = None,
         api_key: Optional[str] = None,
         model: Optional[str] = None,
         dimensions: Optional[int] = None,
@@ -32,34 +32,40 @@ class EmbeddingGenerator:
         Initialize embedding generator.
 
         Args:
-            api_key: OpenAI API key (defaults to settings)
+            api_base: LiteLLM API base URL (defaults to settings)
+            api_key: LiteLLM API key (defaults to settings)
             model: Embedding model name (defaults to settings)
             dimensions: Embedding dimensions (defaults to settings)
             batch_size: Batch size for processing (defaults to settings)
         """
         settings = get_settings()
 
-        self.api_key = api_key or settings.openai_api_key
-        self.model = model or settings.openai_embedding_model
-        self.dimensions = dimensions or settings.openai_embedding_dimensions
+        self.api_base = (api_base or settings.litellm_api_base).rstrip("/")
+        self.api_key = api_key or settings.litellm_api_key
+        self.model = model or settings.embedding_model
+        self.dimensions = dimensions or settings.embedding_dimensions
         self.batch_size = batch_size or settings.embedding_batch_size
 
-        # Initialize OpenAI client
-        self.client = OpenAI(api_key=self.api_key)
+        # HTTP client with timeout
+        self.client = httpx.Client(timeout=60.0)
 
         logger.info(
             f"EmbeddingGenerator initialized: model={self.model}, "
-            f"dimensions={self.dimensions}, batch_size={self.batch_size}"
+            f"dimensions={self.dimensions}, batch_size={self.batch_size}, "
+            f"api_base={self.api_base}"
         )
+
+    def __del__(self):
+        """Close HTTP client on cleanup."""
+        if hasattr(self, "client"):
+            self.client.close()
 
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=10),
         retry=retry_if_exception_type((
-            openai.APIError,
-            openai.APIConnectionError,
-            openai.RateLimitError,
-            openai.APITimeoutError,
+            httpx.HTTPError,
+            httpx.TimeoutException,
         )),
         reraise=True,
     )
@@ -74,7 +80,7 @@ class EmbeddingGenerator:
             Embedding vector
 
         Raises:
-            openai.APIError: If API call fails
+            httpx.HTTPError: If API call fails
         """
         try:
             # Clean text
@@ -84,18 +90,40 @@ class EmbeddingGenerator:
                 logger.warning("Empty text provided for embedding")
                 return [0.0] * self.dimensions
 
-            response = self.client.embeddings.create(
-                input=[text],
-                model=self.model,
-                dimensions=self.dimensions,
+            # Call LiteLLM embeddings endpoint
+            response = self.client.post(
+                f"{self.api_base}/embeddings",
+                json={
+                    "model": self.model,
+                    "input": text,
+                },
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
             )
 
-            embedding = response.data[0].embedding
+            response.raise_for_status()
+            data = response.json()
+
+            # Extract embedding from response
+            embedding = data["data"][0]["embedding"]
+
+            # Validate dimensions
+            if len(embedding) != self.dimensions:
+                logger.warning(
+                    f"Expected {self.dimensions} dimensions, got {len(embedding)}. "
+                    f"Updating configured dimensions."
+                )
+                self.dimensions = len(embedding)
 
             logger.debug(f"Generated embedding for text ({len(text)} chars)")
 
             return embedding
 
+        except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP error generating embedding: {e.response.status_code} - {e.response.text}")
+            raise
         except Exception as e:
             logger.error(f"Error generating embedding: {e}")
             raise
@@ -104,10 +132,8 @@ class EmbeddingGenerator:
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=10),
         retry=retry_if_exception_type((
-            openai.APIError,
-            openai.APIConnectionError,
-            openai.RateLimitError,
-            openai.APITimeoutError,
+            httpx.HTTPError,
+            httpx.TimeoutException,
         )),
         reraise=True,
     )
@@ -122,7 +148,7 @@ class EmbeddingGenerator:
             List of embedding vectors
 
         Raises:
-            openai.APIError: If API call fails
+            httpx.HTTPError: If API call fails
         """
         if not texts:
             return []
@@ -143,18 +169,37 @@ class EmbeddingGenerator:
                 logger.warning("All texts are empty")
                 return [[0.0] * self.dimensions] * len(texts)
 
-            # Generate embeddings
-            response = self.client.embeddings.create(
-                input=valid_texts,
-                model=self.model,
-                dimensions=self.dimensions,
+            # Call LiteLLM embeddings endpoint with batch
+            response = self.client.post(
+                f"{self.api_base}/embeddings",
+                json={
+                    "model": self.model,
+                    "input": valid_texts,
+                },
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
             )
+
+            response.raise_for_status()
+            data = response.json()
 
             # Map embeddings back to original indices
             embeddings = [[0.0] * self.dimensions] * len(texts)
-            for i, embedding_data in enumerate(response.data):
+            for i, embedding_data in enumerate(data["data"]):
                 original_index = text_indices[i]
-                embeddings[original_index] = embedding_data.embedding
+                embedding = embedding_data["embedding"]
+
+                # Validate dimensions on first embedding
+                if i == 0 and len(embedding) != self.dimensions:
+                    logger.warning(
+                        f"Expected {self.dimensions} dimensions, got {len(embedding)}. "
+                        f"Updating configured dimensions."
+                    )
+                    self.dimensions = len(embedding)
+
+                embeddings[original_index] = embedding
 
             logger.info(
                 f"Generated {len(valid_texts)} embeddings in batch "
@@ -163,6 +208,9 @@ class EmbeddingGenerator:
 
             return embeddings
 
+        except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP error generating embeddings batch: {e.response.status_code} - {e.response.text}")
+            raise
         except Exception as e:
             logger.error(f"Error generating embeddings batch: {e}")
             raise
@@ -204,37 +252,6 @@ class EmbeddingGenerator:
         """Get the dimensionality of embeddings."""
         return self.dimensions
 
-    def estimate_cost(self, num_texts: int, avg_tokens_per_text: int = 500) -> float:
-        """
-        Estimate cost for generating embeddings.
-
-        Args:
-            num_texts: Number of texts
-            avg_tokens_per_text: Average tokens per text
-
-        Returns:
-            Estimated cost in USD
-
-        Note:
-            Pricing as of 2024: text-embedding-3-small is $0.02 per 1M tokens
-        """
-        total_tokens = num_texts * avg_tokens_per_text
-
-        # Pricing per 1M tokens
-        if "text-embedding-3-small" in self.model:
-            price_per_million = 0.02
-        elif "text-embedding-3-large" in self.model:
-            price_per_million = 0.13
-        elif "text-embedding-ada-002" in self.model:
-            price_per_million = 0.10
-        else:
-            # Default estimate
-            price_per_million = 0.10
-
-        estimated_cost = (total_tokens / 1_000_000) * price_per_million
-
-        return estimated_cost
-
 
 # Global generator instance
 _generator: Optional[EmbeddingGenerator] = None
@@ -246,6 +263,12 @@ def get_embedding_generator() -> EmbeddingGenerator:
     if _generator is None:
         _generator = EmbeddingGenerator()
     return _generator
+
+
+def reset_embedding_generator():
+    """Reset the global embedding generator instance."""
+    global _generator
+    _generator = None
 
 
 def generate_embedding(text: str) -> List[float]:

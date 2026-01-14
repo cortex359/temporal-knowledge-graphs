@@ -29,35 +29,34 @@ Required settings in `.env`:
 NEO4J_URI=bolt://localhost:7687
 NEO4J_USER=neo4j
 NEO4J_PASSWORD=password
-OPENAI_API_KEY=sk-your-actual-key-here
-LITELLM_API_BASE=http://localhost:4000
-LITELLM_API_KEY=sk-1234
+LITELLM_API_BASE=http://your-litellm-url:4000
+LITELLM_API_KEY=your-litellm-api-key
+EMBEDDING_MODEL=Qwen/Qwen3-Embedding-8B
+EMBEDDING_DIMENSIONS=4096
 ```
 
-### 2. Start Docker Services (2 minutes)
+### 2. Start Docker Services (1 minute)
 
 ```bash
-# Start Neo4j and LiteLLM
+# Start Neo4j
 docker-compose up -d
 
-# Check services are running
+# Check service is running
 docker-compose ps
 
 # Wait for Neo4j to be ready (check http://localhost:7474)
 ```
 
+**Note**: LiteLLM is provided externally. Make sure your LiteLLM service is running and accessible.
+
 ### 3. Install Python Dependencies (3 minutes)
 
 ```bash
-# Create virtual environment
-python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+# Install uv if not already installed
+curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Install dependencies
-pip install -r requirements.txt
-
-# Download spaCy model for entity extraction
-python -m spacy download en_core_web_sm
+# Install dependencies with uv
+uv pip install -r requirements.txt
 ```
 
 ### 4. Initialize Database (1 minute)
@@ -91,8 +90,8 @@ python scripts/ingest_documents.py --path sample_data/ --pattern "*.txt"
 This will:
 - Create 4 sample documents (AI, climate, quantum, healthcare)
 - Process ~50-100 chunks
-- Generate embeddings (using OpenAI API)
-- Extract entities
+- Generate embeddings (using LiteLLM/Qwen embeddings)
+- Extract entities (using LLM via LiteLLM)
 - Build the temporal knowledge graph
 
 ### 6. Test the System (2 minutes)
@@ -175,26 +174,25 @@ docker-compose logs neo4j
 docker-compose restart neo4j
 ```
 
-### OpenAI API Errors
+### LiteLLM API Errors
 ```bash
-# Check your API key is set
-echo $OPENAI_API_KEY
+# Check your LiteLLM service is accessible
+curl $LITELLM_API_BASE/health
 
-# Test the API
-curl https://api.openai.com/v1/models \
-  -H "Authorization: Bearer $OPENAI_API_KEY"
+# Test embeddings endpoint
+curl $LITELLM_API_BASE/embeddings \
+  -H "Authorization: Bearer $LITELLM_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "Qwen/Qwen3-Embedding-8B", "input": "test"}'
 ```
 
 ### Import Errors
 ```bash
-# Ensure virtual environment is activated
-source venv/bin/activate
-
 # Add src to PYTHONPATH
 export PYTHONPATH="${PYTHONPATH}:$(pwd)/src"
 
-# Reinstall dependencies
-pip install -r requirements.txt
+# Reinstall dependencies with uv
+uv pip install -r requirements.txt
 ```
 
 ### Port Already in Use
@@ -304,13 +302,20 @@ User Query
 ## Resources
 
 - **Neo4j Browser**: http://localhost:7474
-- **LiteLLM Proxy**: http://localhost:4000
+- **LiteLLM Proxy**: (External service - configured in .env)
 - **Project Plan**: `.claude/plans/generic-tinkering-cosmos.md`
+
+## Important Notes
+
+- **LiteLLM Service**: This system requires an external LiteLLM service for both LLM and embeddings
+- **Embedding Model**: Uses `Qwen/Qwen3-Embedding-8B` with 4096 dimensions via LiteLLM
+- **Package Manager**: Uses `uv` for fast Python package management
+- **No OpenAI Dependency**: All API calls go through LiteLLM proxy
 
 ---
 
-**Estimated Setup Time**: 15 minutes
+**Estimated Setup Time**: 13 minutes (reduced with uv)
 
 **Status**: Ready for production use
 
-**Last Updated**: 2026-01-06
+**Last Updated**: 2026-01-13

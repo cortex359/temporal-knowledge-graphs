@@ -1,5 +1,6 @@
 """Document data model."""
 
+import json
 from datetime import datetime
 from typing import Any, Dict, Optional
 from uuid import UUID, uuid4
@@ -38,8 +39,14 @@ class Document(BaseModel):
         json_encoders = {datetime: lambda v: v.isoformat()}
 
     def to_neo4j_dict(self) -> Dict[str, Any]:
-        """Convert document to Neo4j-compatible dictionary."""
-        return {
+        """
+        Convert document to Neo4j-compatible dictionary.
+
+        Neo4j doesn't support nested dictionaries as properties,
+        so we convert metadata to JSON string and flatten nested dicts.
+        """
+        # Flatten metadata - convert nested dicts to individual properties
+        result = {
             "id": self.id,
             "title": self.title,
             "source": self.source,
@@ -48,13 +55,45 @@ class Document(BaseModel):
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "version": self.version,
-            "metadata": self.metadata,
         }
+
+        # Add metadata as a JSON string if it exists and is not empty
+        if self.metadata:
+            # Flatten nested metadata into top-level properties with prefix
+            for key, value in self.metadata.items():
+                # Only add primitive types or convert complex types to string
+                if isinstance(value, (str, int, float, bool)):
+                    result[f"meta_{key}"] = value
+                elif value is not None:
+                    result[f"meta_{key}"] = str(value)
+
+            # Also store the full metadata as JSON for complete preservation
+            result["metadata_json"] = json.dumps(self.metadata)
+
+        return result
 
     @classmethod
     def from_neo4j_dict(cls, data: Dict[str, Any]) -> "Document":
-        """Create Document from Neo4j query result."""
-        return cls(**data)
+        """
+        Create Document from Neo4j query result.
+
+        Reconstructs metadata from JSON string if available.
+        """
+        # Extract the metadata JSON if it exists
+        metadata = {}
+        if "metadata_json" in data:
+            try:
+                metadata = json.loads(data["metadata_json"])
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        # Remove metadata-related fields from data
+        clean_data = {k: v for k, v in data.items() if not k.startswith("meta_") and k != "metadata_json"}
+
+        # Add reconstructed metadata
+        clean_data["metadata"] = metadata
+
+        return cls(**clean_data)
 
     def update_timestamp(self) -> None:
         """Update the updated_at timestamp to current time."""
