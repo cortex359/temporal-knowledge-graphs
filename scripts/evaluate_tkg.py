@@ -48,17 +48,16 @@ def format_context_chunks(results: List[Dict]) -> str:
         return ""
 
     context_parts = []
-    for result in results:
-        chunk_content = f"""---NEW CHUNK---
+    for i, result in enumerate(results, 1):
+        chunk_content = f"""---NEW CHUNK (chunk{i})---
 Document Title: {result.get('document_title', 'Unknown')}
 Chunk Order Index: {result.get('chunk_index', 0)}
 Chunk Content:
-{result.get('document_title', 'Unknown')}
 {result.get('text', '')}
 ---END OF CHUNK---"""
         context_parts.append(chunk_content)
 
-    return "\n\n".join(context_parts)
+    return "\n".join(context_parts)
 
 
 def count_evidence_types(results: List[Dict]) -> Dict[str, int]:
@@ -289,16 +288,16 @@ def main():
         epilog="""
 Examples:
   # Evaluate all questions
-  python scripts/evaluate_tkg.py --input data/tkg_answers_from_paper_SKX.jsonl --output data/evaluated.jsonl
+  uv run python scripts/evaluate_tkg.py --input data/tkg_answers_from_paper_SKX.jsonl --output data/answered.jsonl
 
   # Evaluate with limit
-  python scripts/evaluate_tkg.py --input data/questions.jsonl --output data/evaluated.jsonl --limit 10
+  uv run python scripts/evaluate_tkg.py --input data/questions.jsonl --output data/answered.jsonl --limit 10
 
-  # Skip already evaluated questions
-  python scripts/evaluate_tkg.py --input data/questions.jsonl --output data/evaluated.jsonl --skip-existing
+  # Skip already answered questions
+  uv run python scripts/evaluate_tkg.py --input data/questions.jsonl --output data/answered.jsonl --skip-existing
 
   # Show comparison after evaluation
-  python scripts/evaluate_tkg.py --input data/questions.jsonl --output data/evaluated.jsonl --show-comparison
+  uv run python scripts/evaluate_tkg.py --input data/questions.jsonl --output data/answered.jsonl --show-comparison
         """,
     )
 
