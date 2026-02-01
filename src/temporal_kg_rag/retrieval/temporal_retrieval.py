@@ -1,8 +1,13 @@
 """Temporal retrieval with time-aware search capabilities."""
 
+import json
+import re
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
+import httpx
+
+from temporal_kg_rag.config.settings import get_settings
 from temporal_kg_rag.graph.neo4j_client import Neo4jClient, get_neo4j_client
 from temporal_kg_rag.models.temporal import TemporalContext, TemporalFilter, TemporalQueryType
 from temporal_kg_rag.retrieval.hybrid_search import HybridSearch, get_hybrid_search
@@ -31,10 +36,119 @@ class TemporalRetrieval:
 
     def parse_temporal_context(self, query: str) -> TemporalContext:
         """
-        Parse temporal context from query.
+        Parse temporal context from query using LLM for better date recognition.
 
-        This is a simple implementation that looks for common temporal keywords.
-        Could be enhanced with an LLM or more sophisticated NLP.
+        Args:
+            query: Query text
+
+        Returns:
+            Temporal context
+        """
+        # Try LLM-based temporal parsing first
+        try:
+            settings = get_settings()
+            llm_result = self._parse_temporal_with_llm(query, settings)
+
+            if llm_result:
+                logger.info(f"LLM parsed temporal context: {llm_result}")
+                return llm_result
+
+        except Exception as e:
+            logger.warning(f"LLM temporal parsing failed: {e}, falling back to keyword-based parsing")
+
+        # Fallback to keyword-based parsing
+        return self._parse_temporal_fallback(query)
+
+    def _parse_temporal_with_llm(self, query: str, settings) -> Optional[TemporalContext]:
+        """
+        Use LLM to parse temporal context from query.
+
+        Args:
+            query: Query text
+            settings: Application settings
+
+        Returns:
+            Temporal context or None if no temporal reference found
+        """
+        prompt = f"""Analyze this query and extract temporal information.
+
+Query: {query}
+
+Return a JSON object with the following structure:
+{{
+    "has_temporal_reference": true/false,
+    "temporal_type": "latest" | "point_in_time" | "time_range" | "history" | null,
+    "dates": [
+        {{"date": "YYYY-MM-DD", "type": "start" | "end" | "point"}}
+    ],
+    "temporal_phrase": "extracted phrase or null"
+}}
+
+Examples:
+- "What happened on 21. Januar 2024?" -> {{"has_temporal_reference": true, "temporal_type": "point_in_time", "dates": [{{"date": "2024-01-21", "type": "point"}}], "temporal_phrase": "on 21. Januar 2024"}}
+- "What is the latest AI development?" -> {{"has_temporal_reference": true, "temporal_type": "latest", "dates": [], "temporal_phrase": "latest"}}
+- "Between 2020 and 2023" -> {{"has_temporal_reference": true, "temporal_type": "time_range", "dates": [{{"date": "2020-01-01", "type": "start"}}, {{"date": "2023-12-31", "type": "end"}}], "temporal_phrase": "Between 2020 and 2023"}}
+
+Return only valid JSON, no additional text."""
+
+        client = httpx.Client(timeout=30.0)
+        response = client.post(
+            f"{settings.litellm_api_base}/chat/completions",
+            json={
+                "model": settings.entity_extraction_model,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.0,
+                "max_tokens": 500,
+            },
+            headers={"Authorization": f"Bearer {settings.litellm_api_key}"}
+        )
+        response.raise_for_status()
+
+        content = response.json()["choices"][0]["message"]["content"].strip()
+
+        # Extract JSON from response
+        json_match = re.search(r'\{.*\}', content, re.DOTALL)
+        if not json_match:
+            return None
+
+        data = json.loads(json_match.group())
+
+        if not data.get("has_temporal_reference", False):
+            return TemporalContext(has_temporal_reference=False)
+
+        # Create temporal filter based on parsed data
+        temporal_filter = None
+        temporal_type = data.get("temporal_type")
+        dates = data.get("dates", [])
+
+        if temporal_type == "latest":
+            temporal_filter = TemporalFilter.create_latest()
+
+        elif temporal_type == "history":
+            temporal_filter = TemporalFilter.create_history()
+
+        elif temporal_type == "point_in_time" and dates:
+            date_str = dates[0]["date"]
+            timestamp = datetime.fromisoformat(date_str)
+            temporal_filter = TemporalFilter.create_point_in_time(timestamp)
+
+        elif temporal_type == "time_range" and len(dates) >= 2:
+            start_date = datetime.fromisoformat(dates[0]["date"])
+            end_date = datetime.fromisoformat(dates[1]["date"])
+            temporal_filter = TemporalFilter.create_time_range(start_date, end_date)
+
+        context = TemporalContext(
+            has_temporal_reference=True,
+            temporal_filter=temporal_filter,
+            temporal_keywords=[data.get("temporal_phrase", "")],
+            original_temporal_phrase=data.get("temporal_phrase"),
+        )
+
+        return context
+
+    def _parse_temporal_fallback(self, query: str) -> TemporalContext:
+        """
+        Fallback keyword-based temporal parsing.
 
         Args:
             query: Query text
@@ -66,10 +180,7 @@ class TemporalRetrieval:
         if not has_temporal_reference:
             return TemporalContext(has_temporal_reference=False)
 
-        # Try to extract dates (simple patterns)
-        import re
-
-        # Year patterns
+        # Try to extract years (simple patterns)
         year_pattern = r'\b(19|20)\d{2}\b'
         years = re.findall(year_pattern, query)
 
@@ -100,10 +211,10 @@ class TemporalRetrieval:
             has_temporal_reference=True,
             temporal_filter=temporal_filter,
             temporal_keywords=found_keywords,
-            original_temporal_phrase=None,  # Could extract this with better parsing
+            original_temporal_phrase=None,
         )
 
-        logger.info(f"Parsed temporal context: {context.temporal_keywords}")
+        logger.info(f"Fallback parsed temporal context: {context.temporal_keywords}")
 
         return context
 

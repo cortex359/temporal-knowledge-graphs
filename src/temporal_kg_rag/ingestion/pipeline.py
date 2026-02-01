@@ -10,9 +10,10 @@ from temporal_kg_rag.graph.operations import GraphOperations, get_graph_operatio
 from temporal_kg_rag.ingestion.chunker import Chunker, chunk_text
 from temporal_kg_rag.ingestion.document_loader import DocumentLoader, load_document
 from temporal_kg_rag.ingestion.entity_extractor import EntityExtractor, get_entity_extractor
+from temporal_kg_rag.ingestion.relation_extractor import RelationExtractor, get_relation_extractor
 from temporal_kg_rag.models.chunk import Chunk
 from temporal_kg_rag.models.document import Document
-from temporal_kg_rag.models.entity import Entity, EntityMention
+from temporal_kg_rag.models.entity import Entity, EntityMention, EntityRelationship
 from temporal_kg_rag.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -27,6 +28,7 @@ class IngestionPipeline:
         embedding_generator: Optional[EmbeddingGenerator] = None,
         embedding_cache: Optional[EmbeddingCache] = None,
         entity_extractor: Optional[EntityExtractor] = None,
+        relation_extractor: Optional[RelationExtractor] = None,
         graph_operations: Optional[GraphOperations] = None,
         chunker: Optional[Chunker] = None,
     ):
@@ -38,6 +40,7 @@ class IngestionPipeline:
             embedding_generator: Optional embedding generator
             embedding_cache: Optional embedding cache
             entity_extractor: Optional entity extractor
+            relation_extractor: Optional relation extractor
             graph_operations: Optional graph operations
             chunker: Optional chunker
         """
@@ -45,6 +48,7 @@ class IngestionPipeline:
         self.embedding_generator = embedding_generator or get_embedding_generator()
         self.embedding_cache = embedding_cache or get_embedding_cache()
         self.entity_extractor = entity_extractor or get_entity_extractor()
+        self.relation_extractor = relation_extractor or get_relation_extractor()
         self.graph_ops = graph_operations or get_graph_operations()
         self.chunker = chunker or Chunker()
 
@@ -56,6 +60,7 @@ class IngestionPipeline:
         title: Optional[str] = None,
         metadata: Optional[Dict] = None,
         extract_entities: bool = True,
+        extract_relations: bool = True,
         generate_embeddings: bool = True,
     ) -> Document:
         """
@@ -66,13 +71,15 @@ class IngestionPipeline:
         2. Text chunking
         3. Embedding generation
         4. Entity extraction
-        5. Graph storage
+        5. Relation extraction (semantic relationships between entities)
+        6. Graph storage
 
         Args:
             file_path: Path to the document file
             title: Optional document title
             metadata: Optional metadata dictionary
             extract_entities: Whether to extract entities
+            extract_relations: Whether to extract semantic relations between entities
             generate_embeddings: Whether to generate embeddings
 
         Returns:
@@ -85,37 +92,50 @@ class IngestionPipeline:
         logger.info(f"Starting document ingestion: {file_path}")
         logger.info("=" * 60)
 
+        entities = {}
+        mentions = []
+        relationships = []
+
         try:
             # Step 1: Load document
-            logger.info("Step 1/6: Loading document...")
+            logger.info("Step 1/7: Loading document...")
             document, text = self._load_document(file_path, title, metadata)
 
             # Step 2: Create document in graph
-            logger.info("Step 2/6: Creating document node...")
+            logger.info("Step 2/7: Creating document node...")
             self.graph_ops.create_document(document)
 
             # Step 3: Chunk text
-            logger.info("Step 3/6: Chunking text...")
+            logger.info("Step 3/7: Chunking text...")
             chunks = self._chunk_text(text, document.id)
 
             # Step 4: Generate embeddings
             if generate_embeddings:
-                logger.info("Step 4/6: Generating embeddings...")
+                logger.info("Step 4/7: Generating embeddings...")
                 self._generate_embeddings(chunks)
             else:
-                logger.info("Step 4/6: Skipping embedding generation")
+                logger.info("Step 4/7: Skipping embedding generation")
 
             # Step 5: Store chunks
-            logger.info("Step 5/6: Storing chunks...")
+            logger.info("Step 5/7: Storing chunks...")
             self.graph_ops.create_chunks_batch(chunks, document.id)
 
             # Step 6: Extract entities
             if extract_entities:
-                logger.info("Step 6/6: Extracting entities...")
+                logger.info("Step 6/7: Extracting entities...")
                 entities, mentions = self._extract_entities(chunks)
                 self.graph_ops.create_entities_and_mentions_batch(entities, mentions)
             else:
-                logger.info("Step 6/6: Skipping entity extraction")
+                logger.info("Step 6/7: Skipping entity extraction")
+
+            # Step 7: Extract semantic relations between entities
+            if extract_entities and extract_relations and len(entities) >= 2:
+                logger.info("Step 7/7: Extracting semantic relations...")
+                relationships = self._extract_relations(chunks, entities)
+                if relationships:
+                    self.graph_ops.create_entity_relationships_batch(relationships)
+            else:
+                logger.info("Step 7/7: Skipping relation extraction")
 
             logger.info("=" * 60)
             logger.info("Document ingestion completed successfully!")
@@ -124,6 +144,8 @@ class IngestionPipeline:
             if extract_entities:
                 logger.info(f"  Entities extracted: {len(entities)}")
                 logger.info(f"  Entity mentions: {len(mentions)}")
+            if relationships:
+                logger.info(f"  Relations extracted: {len(relationships)}")
             logger.info("=" * 60)
 
             return document
@@ -136,6 +158,7 @@ class IngestionPipeline:
         self,
         file_paths: List[str],
         extract_entities: bool = True,
+        extract_relations: bool = True,
         generate_embeddings: bool = True,
     ) -> List[Document]:
         """
@@ -144,6 +167,7 @@ class IngestionPipeline:
         Args:
             file_paths: List of file paths
             extract_entities: Whether to extract entities
+            extract_relations: Whether to extract semantic relations
             generate_embeddings: Whether to generate embeddings
 
         Returns:
@@ -159,6 +183,7 @@ class IngestionPipeline:
                 document = self.ingest_document(
                     file_path,
                     extract_entities=extract_entities,
+                    extract_relations=extract_relations,
                     generate_embeddings=generate_embeddings,
                 )
                 documents.append(document)
@@ -270,6 +295,61 @@ class IngestionPipeline:
 
         return entities, mentions
 
+    def _extract_relations(
+        self,
+        chunks: List[Chunk],
+        entities: Dict[str, Entity],
+    ) -> List[EntityRelationship]:
+        """
+        Extract semantic relations between entities from chunks.
+
+        Args:
+            chunks: List of text chunks
+            entities: Dictionary of extracted entities (id -> Entity)
+
+        Returns:
+            List of EntityRelationship objects
+        """
+        # Build chunk-to-entities mapping
+        # We need to determine which entities appear in which chunks
+        chunks_with_entities = []
+
+        for chunk in chunks:
+            # Find entities that were mentioned in this chunk
+            chunk_entities = []
+            chunk_text_lower = chunk.text.lower()
+
+            for entity in entities.values():
+                # Check if entity name appears in chunk text
+                if entity.name.lower() in chunk_text_lower:
+                    chunk_entities.append(entity)
+
+            if len(chunk_entities) >= 2:
+                chunks_with_entities.append((chunk, chunk_entities))
+
+        if not chunks_with_entities:
+            logger.info("  No chunks with multiple entities found for relation extraction")
+            return []
+
+        logger.info(f"  Processing {len(chunks_with_entities)} chunks with multiple entities")
+
+        # Extract relations
+        relationships = self.relation_extractor.extract_relations_from_chunks(
+            chunks_with_entities
+        )
+
+        # Log relation distribution
+        if relationships:
+            rel_counts = {}
+            for rel in relationships:
+                rel_counts[rel.relationship] = rel_counts.get(rel.relationship, 0) + 1
+
+            logger.info(f"  Extracted {len(relationships)} semantic relations:")
+            for rel_label, count in sorted(rel_counts.items(), key=lambda x: -x[1]):
+                logger.info(f"    {rel_label}: {count}")
+
+        return relationships
+
     def get_statistics(self) -> Dict:
         """
         Get ingestion statistics.
@@ -301,6 +381,7 @@ def ingest_document(
     file_path: str,
     title: Optional[str] = None,
     metadata: Optional[Dict] = None,
+    extract_relations: bool = True,
 ) -> Document:
     """
     Convenience function to ingest a document.
@@ -309,9 +390,15 @@ def ingest_document(
         file_path: Path to the document file
         title: Optional document title
         metadata: Optional metadata dictionary
+        extract_relations: Whether to extract semantic relations between entities
 
     Returns:
         Created Document object
     """
     pipeline = get_ingestion_pipeline()
-    return pipeline.ingest_document(file_path, title, metadata)
+    return pipeline.ingest_document(
+        file_path,
+        title,
+        metadata,
+        extract_relations=extract_relations,
+    )

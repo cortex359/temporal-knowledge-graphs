@@ -203,9 +203,16 @@ Provide your verification assessment:"""
                 if isinstance(result_entities, list):
                     for entity in result_entities:
                         if isinstance(entity, dict):
-                            entities.add(entity.get("name", ""))
-                        else:
-                            entities.add(str(entity))
+                            name = entity.get("name")
+                            if name:
+                                entities.add(str(name))
+                        elif entity is not None:
+                            entity_str = str(entity).strip()
+                            if entity_str:
+                                entities.add(entity_str)
+
+        # Filter out any empty strings or None values that might have slipped through
+        entities = {e for e in entities if e and isinstance(e, str)}
 
         if not entities:
             return "No entity relationships found."

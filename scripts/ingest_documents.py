@@ -6,6 +6,10 @@ Usage:
     python scripts/ingest_documents.py --path document.pdf
     python scripts/ingest_documents.py --path docs/ --pattern "*.md"
     python scripts/ingest_documents.py --path file.txt --title "My Document" --metadata '{"author": "John Doe"}'
+
+    # ECT-QA dataset ingestion
+    python scripts/ingest_documents.py --ectqa data/ectqa.jsonl
+    python scripts/ingest_documents.py --ectqa data/ectqa.jsonl --limit 100 --sector consumer_discretionary
 """
 
 import argparse
@@ -19,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from temporal_kg_rag.ingestion.pipeline import IngestionPipeline, get_ingestion_pipeline
 from temporal_kg_rag.ingestion.document_loader import DocumentLoader
+from temporal_kg_rag.ingestion.ectqa_loader import ECTQALoader, get_ectqa_loader
 from temporal_kg_rag.utils.logger import setup_logging, get_logger
 from temporal_kg_rag.config.settings import get_settings
 
@@ -100,16 +105,24 @@ Examples:
   # Skip entity extraction (faster)
   %(prog)s --path document.pdf --no-entities
 
+  # Skip relation extraction (keep entities but skip relations)
+  %(prog)s --path document.pdf --no-relations
+
   # Skip embeddings (for testing)
   %(prog)s --path document.pdf --no-embeddings
+
+  # ECT-QA dataset ingestion
+  %(prog)s --ectqa data/ectqa.jsonl
+  %(prog)s --ectqa data/ectqa.jsonl --limit 100
+  %(prog)s --ectqa data/ectqa.jsonl --sector consumer_discretionary --year 2020
+  %(prog)s --ectqa data/ectqa.jsonl --stock-code AAPL --quarter q1
         """,
     )
 
     parser.add_argument(
         "--path",
-        required=True,
         type=str,
-        help="Path to file or directory",
+        help="Path to file or directory (required unless using --ectqa)",
     )
     parser.add_argument(
         "--pattern",
@@ -135,13 +148,56 @@ Examples:
     parser.add_argument(
         "--no-entities",
         action="store_true",
-        help="Skip entity extraction",
+        help="Skip entity extraction (also skips relation extraction)",
+    )
+    parser.add_argument(
+        "--no-relations",
+        action="store_true",
+        help="Skip semantic relation extraction between entities",
     )
     parser.add_argument(
         "--no-embeddings",
         action="store_true",
         help="Skip embedding generation",
     )
+
+    # ECT-QA specific arguments
+    parser.add_argument(
+        "--ectqa",
+        type=str,
+        help="Path to ECT-QA JSONL file (alternative to --path)",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        help="Maximum number of documents to ingest (for ECT-QA)",
+    )
+    parser.add_argument(
+        "--sector",
+        type=str,
+        help="Filter ECT-QA by sector (e.g., consumer_discretionary, technology)",
+    )
+    parser.add_argument(
+        "--year",
+        type=str,
+        help="Filter ECT-QA by year (e.g., 2020)",
+    )
+    parser.add_argument(
+        "--quarter",
+        type=str,
+        help="Filter ECT-QA by quarter (e.g., q1, q2, q3, q4)",
+    )
+    parser.add_argument(
+        "--stock-code",
+        type=str,
+        help="Filter ECT-QA by company stock code (e.g., AAPL)",
+    )
+    parser.add_argument(
+        "--ectqa-stats",
+        action="store_true",
+        help="Show ECT-QA dataset statistics and exit",
+    )
+
     parser.add_argument(
         "--log-level",
         default="INFO",
@@ -164,6 +220,20 @@ Examples:
     logger.info("=" * 70)
 
     try:
+        # Handle ECT-QA mode
+        if args.ectqa:
+            return ingest_ectqa(args)
+
+        # Handle ECT-QA stats only
+        if args.ectqa_stats and not args.ectqa:
+            logger.error("--ectqa-stats requires --ectqa <file>")
+            return 1
+
+        # Regular file ingestion requires --path
+        if not args.path:
+            logger.error("Either --path or --ectqa is required")
+            return 1
+
         # Parse metadata
         metadata = parse_metadata(args.metadata)
 
@@ -196,6 +266,7 @@ Examples:
                 title=args.title,
                 metadata=metadata,
                 extract_entities=not args.no_entities,
+                extract_relations=not args.no_relations,
                 generate_embeddings=not args.no_embeddings,
             )
             logger.info(f"\n✓ Successfully ingested: {document.title}")
@@ -208,6 +279,7 @@ Examples:
             documents = pipeline.ingest_documents_batch(
                 [str(f) for f in files],
                 extract_entities=not args.no_entities,
+                extract_relations=not args.no_relations,
                 generate_embeddings=not args.no_embeddings,
             )
 
@@ -217,22 +289,7 @@ Examples:
 
         # Show statistics
         if args.show_stats:
-            logger.info("\n" + "=" * 70)
-            logger.info("Database Statistics")
-            logger.info("=" * 70)
-
-            stats = pipeline.get_statistics()
-
-            logger.info(f"Documents: {stats['documents']:,}")
-            logger.info(f"Chunks: {stats['chunks']:,}")
-            logger.info(f"Entities: {stats['entities']:,}")
-            logger.info(f"Relationships: {stats['relationships']:,}")
-
-            if "cache" in stats:
-                cache = stats["cache"]
-                logger.info(f"\nEmbedding Cache:")
-                logger.info(f"  Cached embeddings: {cache['total_files']:,}")
-                logger.info(f"  Cache size: {cache['total_size_mb']:.2f} MB")
+            show_database_stats(pipeline)
 
         logger.info("\n" + "=" * 70)
         logger.info("Ingestion Complete!")
@@ -247,6 +304,166 @@ Examples:
     except Exception as e:
         logger.error(f"\nIngestion failed: {e}", exc_info=True)
         return 1
+
+
+def ingest_ectqa(args) -> int:
+    """
+    Handle ECT-QA dataset ingestion.
+
+    Args:
+        args: Parsed command line arguments
+
+    Returns:
+        Exit code (0 for success, 1 for failure)
+    """
+    ectqa_path = Path(args.ectqa).resolve()
+
+    if not ectqa_path.exists():
+        logger.error(f"ECT-QA file not found: {ectqa_path}")
+        return 1
+
+    # Initialize ECT-QA loader
+    ectqa_loader = get_ectqa_loader()
+
+    # Show stats only if requested
+    if args.ectqa_stats:
+        logger.info("ECT-QA Dataset Statistics")
+        logger.info("=" * 70)
+
+        stats = ectqa_loader.get_dataset_stats(str(ectqa_path))
+
+        logger.info(f"Total records: {stats['total_records']:,}")
+        logger.info(f"Unique companies: {stats['unique_companies']:,}")
+        logger.info(f"Total tokens: {stats['total_tokens']:,}")
+
+        logger.info("\nBy Sector:")
+        for sector, count in sorted(stats['sectors'].items(), key=lambda x: -x[1]):
+            logger.info(f"  {sector}: {count:,}")
+
+        logger.info("\nBy Year:")
+        for year, count in sorted(stats['years'].items()):
+            logger.info(f"  {year}: {count:,}")
+
+        logger.info("\nBy Quarter:")
+        for quarter, count in sorted(stats['quarters'].items()):
+            logger.info(f"  {quarter}: {count:,}")
+
+        return 0
+
+    # Initialize pipeline
+    logger.info("Initializing ingestion pipeline...")
+    pipeline = get_ingestion_pipeline()
+
+    # Build filter description
+    filters = []
+    if args.sector:
+        filters.append(f"sector={args.sector}")
+    if args.year:
+        filters.append(f"year={args.year}")
+    if args.quarter:
+        filters.append(f"quarter={args.quarter}")
+    if args.stock_code:
+        filters.append(f"stock_code={args.stock_code}")
+    if args.limit:
+        filters.append(f"limit={args.limit}")
+
+    filter_desc = ", ".join(filters) if filters else "none"
+    logger.info(f"Loading ECT-QA documents from: {ectqa_path}")
+    logger.info(f"Filters: {filter_desc}")
+    logger.info("")
+
+    # Load and ingest documents
+    success_count = 0
+    fail_count = 0
+    total_count = 0
+
+    for document, text in ectqa_loader.load_jsonl(
+        str(ectqa_path),
+        use_cleaned_content=True,
+        limit=args.limit,
+        filter_sector=args.sector,
+        filter_year=args.year,
+        filter_quarter=args.quarter,
+        filter_stock_code=args.stock_code,
+    ):
+        total_count += 1
+
+        try:
+            logger.info(f"\n[{total_count}] Processing: {document.title}")
+
+            # Ingest via pipeline (but we already have the document and text)
+            # We need to manually run the pipeline steps
+            pipeline.graph_ops.create_document(document)
+
+            # Chunk text
+            chunks = pipeline.chunker.chunk_text(text, document.id, strategy="semantic")
+            logger.info(f"  Created {len(chunks)} chunks")
+
+            # Generate embeddings
+            if not args.no_embeddings:
+                pipeline._generate_embeddings(chunks)
+
+            # Store chunks
+            pipeline.graph_ops.create_chunks_batch(chunks, document.id)
+
+            # Extract entities
+            entities = {}
+            mentions = []
+            if not args.no_entities:
+                entities, mentions = pipeline._extract_entities(chunks)
+                pipeline.graph_ops.create_entities_and_mentions_batch(entities, mentions)
+
+            # Extract relations
+            if not args.no_entities and not args.no_relations and len(entities) >= 2:
+                relationships = pipeline._extract_relations(chunks, entities)
+                if relationships:
+                    pipeline.graph_ops.create_entity_relationships_batch(relationships)
+                    logger.info(f"  Extracted {len(relationships)} relations")
+
+            success_count += 1
+            logger.info(f"  ✓ Successfully ingested")
+
+        except Exception as e:
+            fail_count += 1
+            logger.error(f"  ✗ Failed to ingest: {e}")
+            continue
+
+    logger.info("\n" + "=" * 70)
+    logger.info("ECT-QA Ingestion Summary")
+    logger.info("=" * 70)
+    logger.info(f"Total processed: {total_count}")
+    logger.info(f"Successfully ingested: {success_count}")
+    logger.info(f"Failed: {fail_count}")
+
+    # Show statistics
+    if args.show_stats:
+        show_database_stats(pipeline)
+
+    logger.info("\n" + "=" * 70)
+    logger.info("ECT-QA Ingestion Complete!")
+    logger.info("=" * 70)
+
+    return 0 if fail_count == 0 else 1
+
+
+def show_database_stats(pipeline: IngestionPipeline) -> None:
+    """Show database statistics."""
+    logger.info("\n" + "=" * 70)
+    logger.info("Database Statistics")
+    logger.info("=" * 70)
+
+    stats = pipeline.get_statistics()
+
+    logger.info(f"Documents: {stats['documents']:,}")
+    logger.info(f"Chunks: {stats['chunks']:,}")
+    logger.info(f"Entities: {stats['entities']:,}")
+    logger.info(f"Relationships: {stats['relationships']:,}")
+
+    if "cache" in stats:
+        cache = stats["cache"]
+        logger.info(f"\nEmbedding Cache:")
+        logger.info(f"  Cached embeddings: {cache['total_files']:,}")
+        logger.info(f"  Cache size: {cache['total_size_mb']:.2f} MB")
 
 
 if __name__ == "__main__":

@@ -2,6 +2,17 @@
 
 A powerful RAG (Retrieval-Augmented Generation) system that uses a temporal knowledge graph for document storage and retrieval with temporal awareness.
 
+## Disclaimer
+
+Große Teile der Codebasis und der Dokumentation wurden in Absprache mit Jan-Niklas Schagen mit Hilfsmitteln wie 
+Claude Code, Gemini, Codex und GitHub Copilot erstellt.
+Die Verwendung generativer KI hat uns eine umfangreiche Untersuchung des Themas _Temporal Knowledge Graphs_, den
+verschiedenen Herausforderungen und den praktischen Lösungsansätzen ermöglicht, da wir in kürzester Zeit ganz 
+verschiedene Ansätze prototypisch umsetzen und evaluieren konnten.
+Unsere Prüfungsleistung besteht somit nicht in dem vorliegenden Code, sondern in den Untersuchungen, die wir in unserem
+Vortrag vorstellen und einordnen werden. Der Code dient der Reproduktion der Ergebnisse und einer möglichen
+Weiterverwendung der implementierten Systeme.    
+
 ## Features
 
 - **Temporal Knowledge Graph**: Track how information evolves over time with document versioning, chunk supersession, and temporal relationships
@@ -32,7 +43,7 @@ The system implements temporality at three levels:
 
 ## Quick Start
 
-**TL;DR**: See [QUICKSTART.md](QUICKSTART.md) for a 13-minute setup guide.
+**TL;DR**: See [QUICKSTART.md](QUICKSTART.md) for a setup guide.
 
 ### 1. Prerequisites
 
@@ -96,228 +107,14 @@ uv pip install -r requirements.txt
 
 ```bash
 # Initialize Neo4j schema (constraints, indexes, vector index)
-python scripts/init_db.py
+uv run python scripts/init_db.py
 
 # Verify schema
-python scripts/init_db.py --verify-only
+uv run python scripts/init_db.py --verify-only
 
 # Show current schema
-python scripts/init_db.py --show-schema
+uv run python scripts/init_db.py --show-schema
 ```
-
-## Project Status
-
-### ✅ Phase 1: Foundation (COMPLETED)
-
-The foundation is complete with:
-
-**Infrastructure:**
-- ✅ Docker Compose setup with Neo4j
-- ✅ External LiteLLM integration for LLM and embeddings
-- ✅ Environment configuration (.env.example)
-- ✅ Project structure with proper package layout
-
-**Core Library:**
-- ✅ Configuration management (pydantic-settings)
-- ✅ Structured logging (JSON and text formats)
-- ✅ Neo4j client with connection pooling and retry logic
-- ✅ Schema initialization (constraints, indexes, vector index)
-- ✅ Data models (Document, Chunk, Entity, Temporal)
-
-**Validation:**
-- Neo4j service running: ✅
-- Schema initialized: ✅
-- Vector index created (4096 dimensions): ✅
-- Python imports working: ✅
-
-### ✅ Phase 2: Document Ingestion (COMPLETED)
-
-The complete document ingestion pipeline is now operational:
-
-**Document Processing:**
-- ✅ Document loader for PDF, Markdown, HTML, and text files
-- ✅ Semantic chunking with sentence boundaries (1000 tokens, 100 overlap)
-- ✅ Fixed-size chunking fallback
-- ✅ Token counting with tiktoken
-
-**Embeddings:**
-- ✅ LiteLLM embedding generation with batch processing (Qwen/Qwen3-Embedding-8B, 4096 dimensions)
-- ✅ File-based embedding cache to avoid redundant API calls
-- ✅ Automatic retry logic for API failures
-- ✅ HTTP-based API client with httpx
-
-**Entity Extraction:**
-- ✅ LLM-based NER via LiteLLM (PERSON, ORG, LOCATION, etc.)
-- ✅ Entity deduplication and aggregation
-- ✅ Entity mention tracking with context
-- ✅ JSON-based entity extraction with context
-
-**Graph Operations:**
-- ✅ CRUD operations for documents, chunks, and entities
-- ✅ Batch operations for efficient storage
-- ✅ Relationship creation (HAS_CHUNK, MENTIONS)
-
-**Temporal Features:**
-- ✅ Version management with SUPERSEDES relationships
-- ✅ Temporal query building
-- ✅ Point-in-time queries
-- ✅ Time travel capabilities
-
-**CLI Tools:**
-- ✅ `scripts/ingest_documents.py` - Full-featured ingestion script
-- ✅ `scripts/sample_data.py` - Generate test documents
-
-**Validation:**
-- Can ingest multi-format documents: ✅
-- Chunks stored with embeddings: ✅
-- Entities extracted and linked: ✅
-- Temporal metadata captured: ✅
-
-### ✅ Phase 3: Retrieval System (COMPLETED)
-
-The complete hybrid retrieval system with temporal awareness is now operational:
-
-**Vector Search:**
-- ✅ Neo4j vector index integration
-- ✅ Cosine similarity search
-- ✅ Configurable similarity thresholds
-- ✅ Query embedding generation
-- ✅ Context window expansion
-
-**Graph Search:**
-- ✅ Entity-based retrieval
-- ✅ Entity co-occurrence patterns
-- ✅ Multi-hop graph traversal
-- ✅ Entity type filtering
-- ✅ Full-text search fallback
-
-**Hybrid Search:**
-- ✅ Reciprocal Rank Fusion (RRF) algorithm
-- ✅ Configurable alpha weighting (vector vs graph)
-- ✅ Result deduplication
-- ✅ Score normalization
-- ✅ Comparative analysis tools
-
-**Temporal Retrieval:**
-- ✅ Automatic temporal context detection
-- ✅ Point-in-time queries ("as of 2023")
-- ✅ Time range queries ("between 2020 and 2024")
-- ✅ Historical evolution analysis
-- ✅ Version-aware retrieval
-
-**Context Expansion:**
-- ✅ Neighboring chunk retrieval
-- ✅ Entity graph neighborhoods
-- ✅ Related chunk discovery
-- ✅ Document context enrichment
-- ✅ Context summary generation
-
-**Testing Tools:**
-- ✅ `scripts/test_retrieval.py` - Comprehensive test suite
-- ✅ Demo mode with example queries
-- ✅ Comparison tools for different methods
-
-**Validation:**
-- Vector search working: ✅
-- Graph traversal working: ✅
-- Hybrid RRF combining correctly: ✅
-- Temporal queries filtering properly: ✅
-- Context expansion enriching results: ✅
-
-### ✅ Phase 4: RAG System (COMPLETED)
-
-The complete RAG system with both LangChain and LangGraph implementations is now operational:
-
-**Prompt Engineering:**
-- ✅ Comprehensive prompt templates for different query types
-- ✅ System prompts with temporal awareness
-- ✅ Factual, temporal, comparison, evolution, and exploratory prompts
-- ✅ Source citation formatting
-- ✅ Context and entity relationship formatting
-
-**Context Building:**
-- ✅ Context assembly from retrieval results
-- ✅ Metadata enrichment (sources, entities, temporal info)
-- ✅ Context truncation and summarization
-- ✅ Conversation history integration
-- ✅ Prompt template selection based on query type
-
-**LangChain RAG Chain:**
-- ✅ Simple RAG chain implementation
-- ✅ Temporal detection integration
-- ✅ Context expansion
-- ✅ Conversation history support
-- ✅ Streaming response capability
-- ✅ Error handling and fallbacks
-
-**LangGraph Workflow:**
-- ✅ Multi-node RAG pipeline with 5 stages
-- ✅ Node 1: Query understanding (temporal, entities, query type)
-- ✅ Node 2: Retrieval (hybrid search with temporal filtering)
-- ✅ Node 3: Context building (formatting with metadata)
-- ✅ Node 4: Generation (LLM answer with appropriate prompts)
-- ✅ Node 5: Verification (quality checks and validation)
-- ✅ State management across workflow
-- ✅ Dynamic prompt selection based on query characteristics
-
-**Testing Tools:**
-- ✅ `scripts/test_rag.py` - Comprehensive RAG testing suite
-- ✅ Demo mode with example queries
-- ✅ Comparison tools for LangChain vs LangGraph
-- ✅ Streaming response testing
-- ✅ Conversation history testing
-
-**Validation:**
-- RAG chain generates relevant answers: ✅
-- LangGraph workflow processes queries correctly: ✅
-- Source citations working properly: ✅
-- Temporal queries handled correctly: ✅
-- Different query types use appropriate prompts: ✅
-- Verification checks functioning: ✅
-
-### ✅ Phase 5: Web Interfaces (COMPLETED)
-
-Three comprehensive Streamlit applications for interacting with the temporal knowledge graph:
-
-**Graph Visualization Explorer:**
-- ✅ Interactive graph exploration with streamlit-agraph
-- ✅ Database statistics dashboard
-- ✅ Entity search and neighborhood visualization
-- ✅ Document explorer with chunk relationships
-- ✅ Temporal filtering controls (point-in-time, date ranges)
-- ✅ Custom Cypher query interface
-- ✅ Graph export to JSON
-
-**Chunk Retrieval Interface:**
-- ✅ Multiple search strategies (Vector, Graph, Hybrid, Temporal)
-- ✅ Search method comparison tool
-- ✅ Result highlighting with query terms
-- ✅ Temporal and entity filtering
-- ✅ Performance metrics display
-- ✅ Advanced options (similarity threshold, alpha weighting)
-- ✅ Result export functionality
-
-**RAG Chatbot:**
-- ✅ Conversational chat interface
-- ✅ Both LangGraph and LangChain implementations
-- ✅ Streaming response support
-- ✅ Source citations with expandable details
-- ✅ Conversation history management
-- ✅ Temporal query detection indicators
-- ✅ Entity extraction display
-- ✅ Answer verification warnings
-- ✅ Quick query buttons
-- ✅ Conversation export
-
-**Validation:**
-- All three apps launch successfully: ✅
-- Graph visualization renders correctly: ✅
-- Search retrieves and displays results: ✅
-- Chatbot provides coherent answers with sources: ✅
-- Temporal filtering works across all interfaces: ✅
-- UI is intuitive and responsive: ✅
-
-### ⏳ Phase 6: Testing & Documentation (NOT STARTED)
 
 ## Project Structure
 
@@ -330,16 +127,16 @@ temporal-knowledge-graphs/
 ├── src/temporal_kg_rag/           # Core library
 │   ├── config/                    # Configuration management
 │   ├── models/                    # Data models (Pydantic)
-│   ├── graph/                     # Neo4j operations ✅
+│   ├── graph/                     # Neo4j operations
 │   ├── embeddings/                # Embedding generation
 │   ├── temporal/                  # Temporal query building
 │   ├── ingestion/                 # Document processing
 │   ├── retrieval/                 # Hybrid search
 │   ├── rag/                       # RAG workflow
-│   └── utils/                     # Utilities ✅
+│   └── utils/                     # Utilities
 │
 ├── scripts/
-│   ├── init_db.py                 # Database initialization ✅
+│   ├── init_db.py                 # Database initialization
 │   ├── ingest_documents.py        # Document ingestion CLI
 │   └── sample_data.py             # Generate test data
 │
@@ -379,42 +176,42 @@ temporal-knowledge-graphs/
 
 ```bash
 # First time setup
-python scripts/init_db.py
+uv run python scripts/init_db.py
 
 # Force re-initialization (WARNING: drops existing schema)
-python scripts/init_db.py --force
+uv run python scripts/init_db.py --force
 
 # Verify schema is correct
-python scripts/init_db.py --verify-only
+uv run python scripts/init_db.py --verify-only
 ```
 
 ### Document Ingestion
 
 ```bash
 # Generate sample documents for testing
-python scripts/sample_data.py --output-dir ./sample_data
+uv run python scripts/sample_data.py --output-dir ./sample_data
 
 # Ingest a single document
-python scripts/ingest_documents.py --path sample_data/artificial_intelligence_2023.txt
+uv run python scripts/ingest_documents.py --path sample_data/artificial_intelligence_2023.txt
 
 # Ingest all documents in a directory
-python scripts/ingest_documents.py --path sample_data/ --pattern "*.txt"
+uv run python scripts/ingest_documents.py --path sample_data/ --pattern "*.txt"
 
 # Ingest with custom metadata
-python scripts/ingest_documents.py \
+uv run python scripts/ingest_documents.py \
     --path document.pdf \
     --title "Annual Report 2024" \
     --metadata '{"author": "Jane Doe", "department": "Engineering"}'
 
 # Ingest recursively with statistics
-python scripts/ingest_documents.py \
+uv run python scripts/ingest_documents.py \
     --path docs/ \
     --recursive \
     --pattern "*.md" \
     --show-stats
 
 # Quick ingestion (skip entity extraction for speed)
-python scripts/ingest_documents.py --path doc.txt --no-entities
+uv run python scripts/ingest_documents.py --path doc.txt --no-entities
 ```
 
 ### Programmatic Usage
@@ -476,22 +273,22 @@ entities = ops.get_chunk_entities(chunk_id)
 
 ```bash
 # Test retrieval system with demo
-python scripts/test_retrieval.py --demo
+uv run python scripts/test_retrieval.py --demo
 
 # Search with different methods
-python scripts/test_retrieval.py --query "artificial intelligence" --method hybrid
-python scripts/test_retrieval.py --query "OpenAI" --method graph
-python scripts/test_retrieval.py --query "machine learning" --method vector
+uv run python scripts/test_retrieval.py --query "artificial intelligence" --method hybrid
+uv run python scripts/test_retrieval.py --query "OpenAI" --method graph
+uv run python scripts/test_retrieval.py --query "machine learning" --method vector
 
 # Temporal search
-python scripts/test_retrieval.py --query "AI in 2023" --temporal
-python scripts/test_retrieval.py --query "quantum computing" --year 2023
+uv run python scripts/test_retrieval.py --query "AI in 2023" --temporal
+uv run python scripts/test_retrieval.py --query "quantum computing" --year 2023
 
 # Search with context expansion
-python scripts/test_retrieval.py --query "climate change" --expand-context
+uv run python scripts/test_retrieval.py --query "climate change" --expand-context
 
 # Compare all search methods
-python scripts/test_retrieval.py --query "neural networks" --compare
+uv run python scripts/test_retrieval.py --query "neural networks" --compare
 ```
 
 ### Programmatic Retrieval
@@ -542,22 +339,22 @@ print(context_summary)
 
 ```bash
 # Test RAG system with demo
-python scripts/test_rag.py --demo
+uv run python scripts/test_rag.py --demo
 
 # Test LangChain RAG with custom query
-python scripts/test_rag.py --query "What is artificial intelligence?" --method langchain
+uv run python scripts/test_rag.py --query "What is artificial intelligence?" --method langchain
 
 # Test LangGraph RAG with temporal query
-python scripts/test_rag.py --query "AI developments in 2023" --method langgraph --temporal
+uv run python scripts/test_rag.py --query "AI developments in 2023" --method langgraph --temporal
 
 # Compare both implementations
-python scripts/test_rag.py --query "machine learning" --compare
+uv run python scripts/test_rag.py --query "machine learning" --compare
 
 # Test streaming response
-python scripts/test_rag.py --query "climate change" --stream
+uv run python scripts/test_rag.py --query "climate change" --stream
 
 # Run conversation demo
-python scripts/test_rag.py --conversation-demo
+uv run python scripts/test_rag.py --conversation-demo
 ```
 
 ### Programmatic RAG Usage
@@ -741,30 +538,8 @@ export PYTHONPATH="${PYTHONPATH}:$(pwd)/src"
 pip install -e .
 ```
 
-## Roadmap
-
-- [x] Phase 1: Foundation and core infrastructure
-- [x] Phase 2: Document ingestion pipeline
-- [x] Phase 3: Hybrid retrieval system
-- [x] Phase 4: RAG workflow with LangGraph
-- [x] Phase 5: Streamlit web interfaces
-- [ ] Phase 6: Testing and optimization
 
 ## License
 
 MIT License - see LICENSE file for details
 
-## Contributing
-
-Contributions welcome! Please see CONTRIBUTING.md for guidelines.
-
-## Support
-
-For issues and questions:
-- Open an issue on GitHub
-- Check the documentation in `/docs`
-- Review the plan file in `.claude/plans/`
-
----
-
-**Status**: Phases 1-5 Complete ✅✅✅✅✅ | Using uv + LiteLLM (Qwen embeddings) | Last Updated: 2026-01-13

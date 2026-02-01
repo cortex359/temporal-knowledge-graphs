@@ -38,6 +38,11 @@ class Settings(BaseSettings):
         default=4096, description="Embedding vector dimensions"
     )
 
+    # Entity Extraction Model (for LLM-based NER, deduplication, temporal parsing)
+    entity_extraction_model: str = Field(
+        default="gpt-oss-120b", description="Model for entity extraction and NER"
+    )
+
     # Application Configuration
     chunk_size: int = Field(default=1000, description="Text chunk size in tokens")
     chunk_overlap: int = Field(default=100, description="Overlap between chunks in tokens")
@@ -78,10 +83,10 @@ class Settings(BaseSettings):
 
     # Batch Processing
     embedding_batch_size: int = Field(
-        default=100, description="Batch size for embedding generation"
+        default=10, description="Batch size for embedding generation"
     )
     max_concurrent_requests: int = Field(
-        default=5, description="Max concurrent API requests"
+        default=1, description="Max concurrent API requests"
     )
 
     # Graph Query Configuration
@@ -90,6 +95,66 @@ class Settings(BaseSettings):
     )
     query_timeout_seconds: int = Field(
         default=30, description="Timeout for graph queries in seconds"
+    )
+
+    # Entity Deduplication Configuration
+    dedup_embedding_threshold: float = Field(
+        default=0.85,
+        description="Cosine similarity threshold for embedding-based blocking",
+    )
+    dedup_string_threshold: float = Field(
+        default=0.7,
+        description="Jaro-Winkler threshold for string similarity filtering",
+    )
+    dedup_llm_threshold: float = Field(
+        default=0.8,
+        description="Confidence threshold for LLM validation",
+    )
+    dedup_use_llm_validation: bool = Field(
+        default=True,
+        description="Use LLM for final validation of ambiguous entity pairs",
+    )
+    dedup_max_candidates_per_entity: int = Field(
+        default=10,
+        description="Maximum candidate pairs per entity for deduplication",
+    )
+
+    # PPR-based Traversal Configuration
+    enable_ppr_traversal: bool = Field(
+        default=False,
+        description="Enable Personalized PageRank-based graph traversal",
+    )
+    ppr_damping_factor: float = Field(
+        default=0.85,
+        description="Damping factor for PPR (probability of following edges)",
+    )
+    ppr_max_iterations: int = Field(
+        default=20,
+        description="Maximum iterations for PPR convergence",
+    )
+    ppr_convergence_threshold: float = Field(
+        default=1e-6,
+        description="Convergence threshold for PPR",
+    )
+    ppr_temporal_decay: float = Field(
+        default=0.95,
+        description="Temporal decay factor for older facts (per year)",
+    )
+
+    # Bi-temporal Model Configuration
+    enable_bitemporal: bool = Field(
+        default=True,
+        description="Enable bi-temporal tracking (event time + transaction time)",
+    )
+
+    # Relation Extraction Configuration
+    enable_relation_extraction: bool = Field(
+        default=True,
+        description="Enable semantic relation extraction between entities during ingestion",
+    )
+    relation_extraction_model: str = Field(
+        default="",
+        description="Model for relation extraction (empty = use entity_extraction_model)",
     )
 
     def get_neo4j_config(self) -> dict:

@@ -348,6 +348,7 @@ class RAGGraph:
         self,
         question: str,
         top_k: int = 10,
+        return_debug_info: bool = False,
     ) -> Dict:
         """
         Execute RAG workflow.
@@ -355,6 +356,7 @@ class RAGGraph:
         Args:
             question: User question
             top_k: Number of retrieval results
+            return_debug_info: If True, return full pipeline details for transparency
 
         Returns:
             Result dictionary
@@ -392,7 +394,7 @@ class RAGGraph:
             }
 
         # Format response
-        return {
+        result = {
             "answer": final_state["answer"],
             "sources": final_state["sources"],
             "metadata": {
@@ -404,6 +406,64 @@ class RAGGraph:
                 "entities_detected": final_state["entities_detected"],
             },
         }
+
+        # Add debug info for transparent RAG pipeline display
+        if return_debug_info:
+            result["debug"] = {
+                "pipeline_steps": [
+                    {
+                        "step": 1,
+                        "name": "Query Understanding",
+                        "description": "Analyze query for temporal references, entities, and query type",
+                        "output": {
+                            "query_type": final_state["query_type"],
+                            "temporal_detected": final_state["temporal_detected"],
+                            "temporal_context": final_state["temporal_context"],
+                            "entities_detected": final_state["entities_detected"],
+                        }
+                    },
+                    {
+                        "step": 2,
+                        "name": "Retrieval",
+                        "description": "Search the temporal knowledge graph using hybrid search (vector + graph)",
+                        "output": {
+                            "num_results": final_state["num_results"],
+                            "retrieval_results": final_state["retrieval_results"],
+                        }
+                    },
+                    {
+                        "step": 3,
+                        "name": "Context Building",
+                        "description": "Format retrieved chunks into context for the LLM",
+                        "output": {
+                            "formatted_context": final_state["formatted_context"],
+                            "context_metadata": final_state["context_metadata"],
+                        }
+                    },
+                    {
+                        "step": 4,
+                        "name": "Generation",
+                        "description": "Generate answer using LLM with the retrieved context",
+                        "output": {
+                            "answer_length": len(final_state["answer"]),
+                            "sources_count": len(final_state["sources"]),
+                        }
+                    },
+                    {
+                        "step": 5,
+                        "name": "Verification",
+                        "description": "Verify answer quality and citation accuracy",
+                        "output": {
+                            "verified": final_state["verified"],
+                            "verification_notes": final_state["verification_notes"],
+                        }
+                    },
+                ],
+                "full_context": final_state["formatted_context"],
+                "all_retrieval_results": final_state["retrieval_results"],
+            }
+
+        return result
 
 
 # Global RAG graph instance

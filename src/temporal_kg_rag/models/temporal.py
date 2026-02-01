@@ -1,4 +1,15 @@
-"""Temporal query data models."""
+"""
+Temporal query data models with bi-temporal support.
+
+This module implements a bi-temporal model following Zep/Graphiti architecture:
+- Event time (valid_from/valid_to): When the fact was actually true
+- Transaction time (created_at/expired_at): When the fact was recorded/invalidated
+
+This enables:
+- Point-in-time queries ("What was true on date X?")
+- Transaction-time queries ("What did we know on date Y?")
+- Bi-temporal queries ("What did we believe was true about X at time Y?")
+"""
 
 from datetime import datetime
 from enum import Enum
@@ -14,10 +25,17 @@ class TemporalQueryType(str, Enum):
     TIME_RANGE = "time_range"  # Query within a time range
     LATEST = "latest"  # Query for latest/current information
     HISTORY = "history"  # Query for historical changes
+    BITEMPORAL = "bitemporal"  # Query with both event and transaction time
 
 
 class TemporalFilter(BaseModel):
-    """Temporal filter for queries."""
+    """
+    Temporal filter for queries with bi-temporal support.
+
+    Supports two temporal dimensions:
+    - Event time: When the fact was actually true (valid_from/valid_to)
+    - Transaction time: When the fact was recorded (created_at/expired_at)
+    """
 
     query_type: TemporalQueryType = Field(
         default=TemporalQueryType.LATEST,
@@ -25,19 +43,33 @@ class TemporalFilter(BaseModel):
     )
     point_in_time: Optional[datetime] = Field(
         None,
-        description="Specific point in time for POINT_IN_TIME queries",
+        description="Specific point in time for POINT_IN_TIME queries (event time)",
     )
     start_time: Optional[datetime] = Field(
         None,
-        description="Start of time range for TIME_RANGE queries",
+        description="Start of time range for TIME_RANGE queries (event time)",
     )
     end_time: Optional[datetime] = Field(
         None,
-        description="End of time range for TIME_RANGE queries",
+        description="End of time range for TIME_RANGE queries (event time)",
     )
     include_superseded: bool = Field(
         default=False,
         description="Include superseded/historical versions",
+    )
+
+    # Bi-temporal fields (transaction time dimension)
+    transaction_time: Optional[datetime] = Field(
+        None,
+        description="Transaction time for bi-temporal queries (what we knew at this time)",
+    )
+    transaction_start: Optional[datetime] = Field(
+        None,
+        description="Transaction time range start for bi-temporal queries",
+    )
+    transaction_end: Optional[datetime] = Field(
+        None,
+        description="Transaction time range end for bi-temporal queries",
     )
 
     class Config:
@@ -45,12 +77,15 @@ class TemporalFilter(BaseModel):
 
         json_encoders = {datetime: lambda v: v.isoformat()}
 
-    def to_cypher_where_clause(self, node_var: str = "node") -> str:
+    def to_cypher_where_clause(self, node_var: str = "node", rel_var: Optional[str] = None) -> str:
         """
         Generate Cypher WHERE clause for this temporal filter.
 
+        Supports bi-temporal filtering on both nodes and relationships.
+
         Args:
             node_var: Variable name for the node in the Cypher query
+            rel_var: Optional variable name for relationship (for bi-temporal)
 
         Returns:
             Cypher WHERE clause string
@@ -61,16 +96,38 @@ class TemporalFilter(BaseModel):
             clauses.append(f"{node_var}.is_current = true")
 
         elif self.query_type == TemporalQueryType.POINT_IN_TIME and self.point_in_time:
+            # Event time: when was this fact true?
             clauses.append(f"{node_var}.created_at <= $point_in_time")
+            # Handle case where superseded_at property might not exist in DB
+            # Use coalesce pattern: check is_current OR superseded_at > point_in_time
             clauses.append(
-                f"({node_var}.superseded_at IS NULL OR {node_var}.superseded_at > $point_in_time)"
+                f"({node_var}.is_current = true OR {node_var}.superseded_at > $point_in_time)"
             )
+            # Note: Relationship temporal filtering is disabled as most relationships
+            # don't have valid_from/valid_to properties in the current schema.
 
         elif self.query_type == TemporalQueryType.TIME_RANGE:
             if self.start_time:
                 clauses.append(f"{node_var}.created_at >= $start_time")
             if self.end_time:
                 clauses.append(f"{node_var}.created_at <= $end_time")
+            # Note: Relationship temporal filtering is disabled as most relationships
+            # don't have valid_from/valid_to properties in the current schema.
+            # Enable when bi-temporal relationships are fully implemented.
+
+        elif self.query_type == TemporalQueryType.BITEMPORAL:
+            # Bi-temporal query: filter by both event time and transaction time
+            if self.point_in_time:
+                # Event time filter - use created_at as proxy for valid_from
+                clauses.append(f"{node_var}.created_at <= $point_in_time")
+                clauses.append(
+                    f"({node_var}.is_current = true OR {node_var}.superseded_at > $point_in_time)"
+                )
+            if self.transaction_time:
+                # Transaction time filter: what did we know at this time?
+                clauses.append(f"{node_var}.created_at <= $transaction_time")
+            # Note: Relationship bi-temporal filtering is disabled as most relationships
+            # don't have valid_from/valid_to properties in the current schema.
 
         elif self.query_type == TemporalQueryType.HISTORY:
             # Include all versions, no filters
@@ -90,6 +147,16 @@ class TemporalFilter(BaseModel):
 
         if self.end_time:
             params["end_time"] = self.end_time
+
+        # Bi-temporal parameters
+        if self.transaction_time:
+            params["transaction_time"] = self.transaction_time
+
+        if self.transaction_start:
+            params["transaction_start"] = self.transaction_start
+
+        if self.transaction_end:
+            params["transaction_end"] = self.transaction_end
 
         return params
 
@@ -125,6 +192,47 @@ class TemporalFilter(BaseModel):
         return cls(
             query_type=TemporalQueryType.HISTORY,
             include_superseded=True,
+        )
+
+    @classmethod
+    def create_bitemporal(
+        cls,
+        event_time: Optional[datetime] = None,
+        transaction_time: Optional[datetime] = None,
+    ) -> "TemporalFilter":
+        """
+        Create a bi-temporal filter.
+
+        Args:
+            event_time: When was the fact true? (valid time)
+            transaction_time: What did we know at this time? (transaction time)
+
+        Returns:
+            Bi-temporal filter
+        """
+        return cls(
+            query_type=TemporalQueryType.BITEMPORAL,
+            point_in_time=event_time,
+            transaction_time=transaction_time,
+        )
+
+    @classmethod
+    def create_as_of_transaction(cls, transaction_time: datetime) -> "TemporalFilter":
+        """
+        Create a filter for "what did we know at time X?"
+
+        This returns the state of knowledge as it existed at transaction_time,
+        regardless of when the facts were actually true.
+
+        Args:
+            transaction_time: The point in transaction time to query
+
+        Returns:
+            Transaction-time filter
+        """
+        return cls(
+            query_type=TemporalQueryType.BITEMPORAL,
+            transaction_time=transaction_time,
         )
 
 

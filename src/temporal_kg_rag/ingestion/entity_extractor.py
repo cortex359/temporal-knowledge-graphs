@@ -274,12 +274,14 @@ JSON:"""
     def extract_entities_from_chunks(
         self,
         chunks: List["Chunk"],
+        use_deduplication: bool = True,
     ) -> Tuple[Dict[str, Entity], List[EntityMention]]:
         """
-        Extract entities from a list of chunks.
+        Extract entities from a list of chunks with LLM-based deduplication.
 
         Args:
             chunks: List of Chunk objects
+            use_deduplication: Whether to use LLM-based entity deduplication
 
         Returns:
             Tuple of (entity_dict, mentions_list) where entity_dict maps entity IDs to Entity objects
@@ -304,6 +306,13 @@ JSON:"""
 
             # Collect mentions
             all_mentions.extend(mentions)
+
+        # Apply LLM-based deduplication
+        if use_deduplication and len(all_entities) > 1:
+            from temporal_kg_rag.ingestion.entity_deduplication import get_entity_deduplicator
+
+            deduplicator = get_entity_deduplicator()
+            all_entities = deduplicator.deduplicate_entities(all_entities)
 
         return all_entities, all_mentions
 

@@ -65,6 +65,8 @@ if "selected_node" not in st.session_state:
     st.session_state.selected_node = None
 if "graph_data" not in st.session_state:
     st.session_state.graph_data = None
+if "full_graph_data" not in st.session_state:
+    st.session_state.full_graph_data = None
 
 
 def init_connections():
@@ -365,6 +367,265 @@ def export_graph_data(graph_data: Dict) -> str:
         return "{}"
 
 
+# Entity type colors for visualization
+ENTITY_TYPE_COLORS = {
+    "PERSON": "#e74c3c",      # Red
+    "ORG": "#3498db",         # Blue
+    "LOCATION": "#2ecc71",    # Green
+    "DATE": "#f39c12",        # Orange
+    "EVENT": "#9b59b6",       # Purple
+    "CONCEPT": "#1abc9c",     # Teal
+    "PRODUCT": "#e91e63",     # Pink
+    "TECHNOLOGY": "#00bcd4",  # Cyan
+    "DEFAULT": "#95a5a6",     # Gray
+}
+
+
+def get_full_knowledge_graph(
+    max_entities: int = 100,
+    max_relationships: int = 200,
+    entity_types: Optional[List[str]] = None,
+) -> Optional[Dict]:
+    """
+    Build the full knowledge graph with all entities and relationships.
+
+    Args:
+        max_entities: Maximum number of entities to include
+        max_relationships: Maximum number of relationships to include
+        entity_types: Optional filter for specific entity types
+
+    Returns:
+        Dictionary with nodes and edges for visualization
+    """
+    try:
+        client = st.session_state.neo4j_client
+
+        # Build type filter if specified
+        type_filter = ""
+        if entity_types and "All" not in entity_types:
+            type_filter = "WHERE e.type IN $entity_types"
+
+        # Query all entities
+        entity_query = f"""
+        MATCH (e:Entity)
+        {type_filter}
+        RETURN e.id AS id, e.name AS name, e.type AS type,
+               e.mention_count AS mention_count,
+               e.first_seen AS first_seen, e.last_seen AS last_seen
+        ORDER BY e.mention_count DESC
+        LIMIT $max_entities
+        """
+
+        params = {"max_entities": max_entities}
+        if entity_types and "All" not in entity_types:
+            params["entity_types"] = entity_types
+
+        entities = client.execute_query(entity_query, params)
+
+        if not entities:
+            return None
+
+        entity_ids = [e["id"] for e in entities]
+
+        # Query relationships between these entities via co-occurrence in chunks
+        relationship_query = """
+        MATCH (e1:Entity)<-[:MENTIONS]-(c:Chunk)-[:MENTIONS]->(e2:Entity)
+        WHERE e1.id IN $entity_ids AND e2.id IN $entity_ids
+        AND e1.id < e2.id
+        WITH e1, e2, count(c) AS co_occurrence_count
+        WHERE co_occurrence_count >= 1
+        RETURN e1.id AS source, e2.id AS target,
+               co_occurrence_count,
+               'CO_OCCURS' AS relationship_type
+        ORDER BY co_occurrence_count DESC
+        LIMIT $max_relationships
+        """
+
+        relationships = client.execute_query(
+            relationship_query,
+            {"entity_ids": entity_ids, "max_relationships": max_relationships}
+        )
+
+        # Also get explicit RELATES_TO relationships if they exist
+        explicit_rel_query = """
+        MATCH (e1:Entity)-[r:RELATES_TO]->(e2:Entity)
+        WHERE e1.id IN $entity_ids AND e2.id IN $entity_ids
+        RETURN e1.id AS source, e2.id AS target,
+               1 AS co_occurrence_count,
+               type(r) AS relationship_type
+        LIMIT $max_relationships
+        """
+
+        explicit_rels = client.execute_query(
+            explicit_rel_query,
+            {"entity_ids": entity_ids, "max_relationships": max_relationships}
+        )
+
+        # Combine relationships
+        all_relationships = relationships + explicit_rels
+
+        # Build nodes
+        nodes = []
+        for entity in entities:
+            entity_type = entity.get("type", "DEFAULT")
+            color = ENTITY_TYPE_COLORS.get(entity_type, ENTITY_TYPE_COLORS["DEFAULT"])
+
+            # Size based on mention count
+            mention_count = entity.get("mention_count", 1) or 1
+            size = min(10 + mention_count * 2, 40)
+
+            # Build tooltip
+            tooltip_parts = [
+                f"<b>{entity['name']}</b>",
+                f"Type: {entity_type}",
+                f"Mentions: {mention_count}",
+            ]
+            if entity.get("first_seen"):
+                tooltip_parts.append(f"First seen: {entity['first_seen']}")
+            if entity.get("last_seen"):
+                tooltip_parts.append(f"Last seen: {entity['last_seen']}")
+
+            nodes.append(
+                Node(
+                    id=entity["id"],
+                    label=entity["name"][:25] + ("..." if len(entity["name"]) > 25 else ""),
+                    title="<br>".join(tooltip_parts),
+                    color=color,
+                    size=size,
+                )
+            )
+
+        # Build edges
+        edges = []
+        seen_edges = set()
+
+        for rel in all_relationships:
+            edge_key = (rel["source"], rel["target"])
+            if edge_key not in seen_edges:
+                # Edge width based on co-occurrence count
+                count = rel.get("co_occurrence_count", 1)
+                width = min(1 + count * 0.5, 5)
+
+                edges.append(
+                    Edge(
+                        source=rel["source"],
+                        target=rel["target"],
+                        label=rel.get("relationship_type", ""),
+                        width=width,
+                        title=f"Co-occurrences: {count}" if rel.get("relationship_type") == "CO_OCCURS" else "",
+                    )
+                )
+                seen_edges.add(edge_key)
+
+        return {"nodes": nodes, "edges": edges}
+
+    except Exception as e:
+        logger.error(f"Failed to build full knowledge graph: {e}")
+        return None
+
+
+def get_document_entity_graph(
+    max_documents: int = 20,
+    max_entities_per_doc: int = 10,
+) -> Optional[Dict]:
+    """
+    Build a graph showing documents and their connected entities.
+
+    Args:
+        max_documents: Maximum number of documents to include
+        max_entities_per_doc: Maximum entities per document
+
+    Returns:
+        Dictionary with nodes and edges for visualization
+    """
+    try:
+        client = st.session_state.neo4j_client
+
+        query = """
+        MATCH (d:Document)
+        WITH d
+        ORDER BY d.created_at DESC
+        LIMIT $max_documents
+
+        OPTIONAL MATCH (d)-[:HAS_CHUNK]->(c:Chunk)-[:MENTIONS]->(e:Entity)
+        WHERE c.is_current = true
+
+        WITH d, e, count(c) AS mention_count
+        ORDER BY mention_count DESC
+
+        WITH d, collect({entity: e, mentions: mention_count})[0..$max_entities_per_doc] AS top_entities
+
+        RETURN d.id AS doc_id, d.title AS doc_title, d.created_at AS created_at,
+               [te IN top_entities WHERE te.entity IS NOT NULL |
+                {id: te.entity.id, name: te.entity.name, type: te.entity.type, mentions: te.mentions}
+               ] AS entities
+        """
+
+        results = client.execute_query(
+            query,
+            {"max_documents": max_documents, "max_entities_per_doc": max_entities_per_doc}
+        )
+
+        if not results:
+            return None
+
+        nodes = []
+        edges = []
+        seen_entities = set()
+
+        for doc in results:
+            # Add document node
+            doc_id = doc["doc_id"]
+            nodes.append(
+                Node(
+                    id=doc_id,
+                    label=doc["doc_title"][:30] + ("..." if len(doc["doc_title"]) > 30 else ""),
+                    title=f"<b>Document:</b> {doc['doc_title']}",
+                    color="#8e44ad",
+                    size=30,
+                    shape="box",
+                )
+            )
+
+            # Add entity nodes and edges
+            for entity_data in doc.get("entities", []):
+                if entity_data:
+                    entity_id = entity_data["id"]
+
+                    # Add entity node if not already added
+                    if entity_id not in seen_entities:
+                        entity_type = entity_data.get("type", "DEFAULT")
+                        color = ENTITY_TYPE_COLORS.get(entity_type, ENTITY_TYPE_COLORS["DEFAULT"])
+
+                        nodes.append(
+                            Node(
+                                id=entity_id,
+                                label=entity_data["name"][:20],
+                                title=f"<b>{entity_data['name']}</b><br>Type: {entity_type}",
+                                color=color,
+                                size=15,
+                            )
+                        )
+                        seen_entities.add(entity_id)
+
+                    # Add edge from document to entity
+                    edges.append(
+                        Edge(
+                            source=doc_id,
+                            target=entity_id,
+                            label="MENTIONS",
+                            color="#bdc3c7",
+                            title=f"Mentions: {entity_data.get('mentions', 1)}",
+                        )
+                    )
+
+        return {"nodes": nodes, "edges": edges}
+
+    except Exception as e:
+        logger.error(f"Failed to build document-entity graph: {e}")
+        return None
+
+
 # Sidebar
 with st.sidebar:
     st.title("🕸️ Graph Explorer")
@@ -431,10 +692,176 @@ if not st.session_state.neo4j_client:
     st.stop()
 
 # Tabs for different views
-tab1, tab2, tab3 = st.tabs(["📈 Entity Explorer", "📄 Document Explorer", "🔍 Custom Query"])
+tab1, tab2, tab3, tab4 = st.tabs([
+    "🌐 Full Graph",
+    "📈 Entity Explorer",
+    "📄 Document Explorer",
+    "🔍 Custom Query"
+])
 
-# Tab 1: Entity Explorer
+# Tab 1: Full Knowledge Graph
 with tab1:
+    st.header("Full Knowledge Graph")
+    st.markdown(
+        "Visualize the complete knowledge graph with all entities and their relationships."
+    )
+
+    # Graph options
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        graph_mode = st.selectbox(
+            "Graph Mode",
+            ["Entity Network", "Document-Entity Graph"],
+            help="Choose visualization mode"
+        )
+
+    with col2:
+        if graph_mode == "Entity Network":
+            max_entities = st.slider(
+                "Max Entities",
+                min_value=10,
+                max_value=500,
+                value=100,
+                step=10,
+                help="Maximum number of entities to display"
+            )
+        else:
+            max_documents = st.slider(
+                "Max Documents",
+                min_value=5,
+                max_value=50,
+                value=20,
+                step=5,
+                help="Maximum number of documents to display"
+            )
+
+    with col3:
+        if graph_mode == "Entity Network":
+            max_relationships = st.slider(
+                "Max Relationships",
+                min_value=50,
+                max_value=1000,
+                value=200,
+                step=50,
+                help="Maximum number of relationships to display"
+            )
+        else:
+            max_entities_per_doc = st.slider(
+                "Entities per Document",
+                min_value=3,
+                max_value=20,
+                value=10,
+                step=1,
+                help="Maximum entities shown per document"
+            )
+
+    # Entity type filter (only for Entity Network mode)
+    if graph_mode == "Entity Network":
+        available_types = ["All"] + get_entity_types()
+        selected_types = st.multiselect(
+            "Filter by Entity Types",
+            available_types,
+            default=["All"],
+            help="Select specific entity types to display"
+        )
+
+    # Visualization settings
+    st.subheader("Visualization Settings")
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        physics_enabled = st.checkbox("Enable Physics", value=True, help="Enable physics simulation for node positioning")
+    with col2:
+        hierarchical = st.checkbox("Hierarchical Layout", value=False, help="Use hierarchical layout instead of force-directed")
+    with col3:
+        show_labels = st.checkbox("Show Edge Labels", value=False, help="Display relationship labels on edges")
+
+    # Build and display graph
+    if st.button("🔄 Load Full Graph", type="primary"):
+        with st.spinner("Building knowledge graph... This may take a moment for large graphs."):
+            if graph_mode == "Entity Network":
+                # Handle "All" selection
+                type_filter = None if "All" in selected_types else selected_types
+
+                full_graph = get_full_knowledge_graph(
+                    max_entities=max_entities,
+                    max_relationships=max_relationships,
+                    entity_types=type_filter,
+                )
+            else:
+                full_graph = get_document_entity_graph(
+                    max_documents=max_documents,
+                    max_entities_per_doc=max_entities_per_doc,
+                )
+
+            if full_graph:
+                st.session_state.full_graph_data = full_graph
+                st.success(
+                    f"Loaded {len(full_graph['nodes'])} nodes and "
+                    f"{len(full_graph['edges'])} edges"
+                )
+            else:
+                st.warning("No data found in the knowledge graph")
+
+    # Display the graph
+    if "full_graph_data" in st.session_state and st.session_state.full_graph_data:
+        graph_data = st.session_state.full_graph_data
+
+        # Show legend for entity types
+        if graph_mode == "Entity Network":
+            st.subheader("Entity Type Legend")
+            legend_cols = st.columns(len(ENTITY_TYPE_COLORS) - 1)  # Exclude DEFAULT
+            for i, (type_name, color) in enumerate([
+                (k, v) for k, v in ENTITY_TYPE_COLORS.items() if k != "DEFAULT"
+            ]):
+                with legend_cols[i % len(legend_cols)]:
+                    st.markdown(
+                        f'<span style="color:{color}">●</span> {type_name}',
+                        unsafe_allow_html=True
+                    )
+
+        # Configure the graph
+        config = Config(
+            width="100%",
+            height=700,
+            directed=graph_mode == "Document-Entity Graph",
+            physics=physics_enabled,
+            hierarchical=hierarchical,
+            nodeHighlightBehavior=True,
+            highlightColor="#f1c40f",
+            collapsible=False,
+            node={"labelProperty": "label"},
+            link={"labelProperty": "label" if show_labels else ""},
+        )
+
+        # Render the graph
+        selected_node = agraph(
+            nodes=graph_data["nodes"],
+            edges=graph_data["edges"],
+            config=config,
+        )
+
+        # Show selected node info
+        if selected_node:
+            st.info(f"Selected: {selected_node}")
+
+        # Export options
+        col1, col2 = st.columns(2)
+        with col1:
+            export_data = export_graph_data(graph_data)
+            st.download_button(
+                "📥 Export as JSON",
+                data=export_data,
+                file_name="full_knowledge_graph.json",
+                mime="application/json",
+            )
+        with col2:
+            st.metric("Total Nodes", len(graph_data["nodes"]))
+            st.metric("Total Edges", len(graph_data["edges"]))
+
+# Tab 2: Entity Explorer
+with tab2:
     st.header("Entity Explorer")
 
     col1, col2 = st.columns([3, 1])
@@ -501,8 +928,8 @@ with tab1:
         else:
             st.info("No entities found")
 
-# Tab 2: Document Explorer
-with tab2:
+# Tab 3: Document Explorer
+with tab3:
     st.header("Document Explorer")
 
     documents = get_documents(limit=50)
@@ -570,8 +997,8 @@ with tab2:
     else:
         st.info("No documents found in the database")
 
-# Tab 3: Custom Query
-with tab3:
+# Tab 4: Custom Query
+with tab4:
     st.header("Custom Cypher Query")
 
     st.warning("⚠️ Use with caution. Only READ queries are recommended.")

@@ -143,31 +143,68 @@ class EntityMention(BaseModel):
 
 
 class EntityRelationship(BaseModel):
-    """Relationship between two entities."""
+    """
+    Temporal quadruple representing a relationship between two entities.
 
+    Stored as: (relationship, timestamp, source, target, description)
+
+    The relationship description is free-form and comprehensive, following these guidelines:
+    1. The nature of the relationship (e.g., familial, professional, causal)
+    2. The impact or significance of the relationship on both entities
+    3. Any historical or contextual information relevant to the relationship
+    4. How the relationship evolved over time (if applicable)
+    5. Any notable events or actions that resulted from this relationship
+    """
+
+    # Core temporal quadruple fields
     source_entity_id: str = Field(..., description="Source entity ID")
+    source_entity_name: str = Field(default="", description="Source entity name")
     target_entity_id: str = Field(..., description="Target entity ID")
-    relationship_type: str = Field(
+    target_entity_name: str = Field(default="", description="Target entity name")
+
+    # Free-form relationship label (short identifier)
+    relationship: str = Field(
         ...,
-        description="Type of relationship (works_for, located_in, etc.)",
+        description="Short relationship label (e.g., 'founded', 'collaborated with', 'acquired')",
     )
+
+    # Comprehensive relationship description following the guidelines
+    description: str = Field(
+        ...,
+        description=(
+            "Detailed multi-sentence description covering: nature of relationship, "
+            "impact/significance, historical context, evolution over time, notable events"
+        ),
+    )
+
+    # Temporal information (the timestamp in the quadruple)
+    timestamp: Optional[datetime] = Field(
+        None,
+        description="Primary timestamp when this relationship was established or is most relevant",
+    )
+    valid_from: datetime = Field(
+        default_factory=datetime.now,
+        description="When this relationship became valid (start of validity period)",
+    )
+    valid_to: Optional[datetime] = Field(
+        None,
+        description="When this relationship ceased to be valid (end of validity period)",
+    )
+
+    # Metadata
     confidence: float = Field(
         default=1.0,
         ge=0.0,
         le=1.0,
-        description="Confidence score of the relationship",
-    )
-    valid_from: datetime = Field(
-        default_factory=datetime.now,
-        description="When this relationship became valid",
-    )
-    valid_to: Optional[datetime] = Field(
-        None,
-        description="When this relationship ceased to be valid",
+        description="Confidence score of the relationship extraction",
     )
     source_chunks: list[str] = Field(
         default_factory=list,
         description="Chunk IDs where this relationship was observed",
+    )
+    properties: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Additional relationship properties extracted from context",
     )
 
     class Config:
@@ -177,10 +214,54 @@ class EntityRelationship(BaseModel):
 
     def to_neo4j_relationship_dict(self) -> Dict[str, Any]:
         """Convert relationship to Neo4j relationship properties."""
-        return {
-            "relationship_type": self.relationship_type,
-            "confidence": self.confidence,
+        result = {
+            "relationship": self.relationship,
+            "description": self.description,
+            "timestamp": self.timestamp,
             "valid_from": self.valid_from,
             "valid_to": self.valid_to,
+            "confidence": self.confidence,
             "source_chunks": self.source_chunks,
         }
+        # Add extra properties
+        for key, value in self.properties.items():
+            if isinstance(value, (str, int, float, bool)):
+                result[f"prop_{key}"] = value
+        return result
+
+    def to_quadruple(self) -> tuple:
+        """
+        Return as temporal quadruple: (relationship, timestamp, source, target, description).
+        """
+        return (
+            self.relationship,
+            self.timestamp,
+            self.source_entity_name,
+            self.target_entity_name,
+            self.description,
+        )
+
+    @classmethod
+    def from_quadruple(
+        cls,
+        relationship: str,
+        timestamp: Optional[datetime],
+        source_id: str,
+        source_name: str,
+        target_id: str,
+        target_name: str,
+        description: str,
+        **kwargs,
+    ) -> "EntityRelationship":
+        """Create EntityRelationship from quadruple components."""
+        return cls(
+            relationship=relationship,
+            timestamp=timestamp,
+            source_entity_id=source_id,
+            source_entity_name=source_name,
+            target_entity_id=target_id,
+            target_entity_name=target_name,
+            description=description,
+            valid_from=timestamp or datetime.now(),
+            **kwargs,
+        )

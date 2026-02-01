@@ -6,7 +6,7 @@ from typing import Dict, List, Optional
 from temporal_kg_rag.graph.neo4j_client import Neo4jClient, get_neo4j_client
 from temporal_kg_rag.models.chunk import Chunk
 from temporal_kg_rag.models.document import Document
-from temporal_kg_rag.models.entity import Entity, EntityMention
+from temporal_kg_rag.models.entity import Entity, EntityMention, EntityRelationship
 from temporal_kg_rag.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -381,6 +381,190 @@ class GraphOperations:
             })
 
             logger.info(f"Created {len(mentions)} entity mentions")
+
+    def create_entity_relationship(self, relationship: EntityRelationship) -> None:
+        """
+        Create a semantic relationship between two entities as a temporal quadruple.
+
+        Temporal quadruple: (relationship, timestamp, source, target, description)
+
+        Args:
+            relationship: EntityRelationship to create
+        """
+        query = """
+        MATCH (source:Entity {id: $source_id})
+        MATCH (target:Entity {id: $target_id})
+        MERGE (source)-[r:RELATES_TO {
+            relationship: $relationship,
+            timestamp: $timestamp,
+            description: $description,
+            confidence: $confidence,
+            valid_from: $valid_from,
+            source_chunks: $source_chunks
+        }]->(target)
+        SET r.valid_to = $valid_to
+        RETURN r
+        """
+
+        params = {
+            "source_id": relationship.source_entity_id,
+            "target_id": relationship.target_entity_id,
+            "relationship": relationship.relationship,
+            "timestamp": relationship.timestamp,
+            "description": relationship.description,
+            "confidence": relationship.confidence,
+            "valid_from": relationship.valid_from,
+            "valid_to": relationship.valid_to,
+            "source_chunks": relationship.source_chunks,
+        }
+
+        self.client.execute_write_transaction(query, params)
+
+        logger.debug(
+            f"Created relationship: {relationship.source_entity_name} "
+            f"-[{relationship.relationship}]-> "
+            f"{relationship.target_entity_name}"
+        )
+
+    def create_entity_relationships_batch(
+        self,
+        relationships: List[EntityRelationship],
+    ) -> None:
+        """
+        Create multiple entity relationships in batch as temporal quadruples.
+
+        Temporal quadruple: (relationship, timestamp, source, target, description)
+
+        Args:
+            relationships: List of EntityRelationship objects
+        """
+        if not relationships:
+            return
+
+        query = """
+        UNWIND $relationships AS rel
+        MATCH (source:Entity {id: rel.source_id})
+        MATCH (target:Entity {id: rel.target_id})
+        MERGE (source)-[r:RELATES_TO {relationship: rel.relationship}]->(target)
+        SET r.timestamp = rel.timestamp,
+            r.description = rel.description,
+            r.confidence = rel.confidence,
+            r.valid_from = rel.valid_from,
+            r.valid_to = rel.valid_to,
+            r.source_chunks = COALESCE(r.source_chunks, []) + rel.source_chunks,
+            r.created_at = COALESCE(r.created_at, datetime())
+        """
+
+        rel_data = []
+        for rel in relationships:
+            rel_data.append({
+                "source_id": rel.source_entity_id,
+                "target_id": rel.target_entity_id,
+                "relationship": rel.relationship,
+                "timestamp": rel.timestamp,
+                "description": rel.description,
+                "confidence": rel.confidence,
+                "valid_from": rel.valid_from,
+                "valid_to": rel.valid_to,
+                "source_chunks": rel.source_chunks,
+            })
+
+        self.client.execute_write_transaction(query, {"relationships": rel_data})
+
+        logger.info(f"Created {len(relationships)} entity relationships")
+
+    def get_entity_relationships(
+        self,
+        entity_id: str,
+        direction: str = "both",
+        relationship_filter: Optional[str] = None,
+    ) -> List[Dict]:
+        """
+        Get relationships for an entity as temporal quadruples.
+
+        Args:
+            entity_id: Entity ID
+            direction: "outgoing", "incoming", or "both"
+            relationship_filter: Optional filter string to match relationship labels
+
+        Returns:
+            List of relationship dictionaries (temporal quadruples)
+        """
+        rel_filter = ""
+        if relationship_filter:
+            rel_filter = f"AND toLower(r.relationship) CONTAINS toLower('{relationship_filter}')"
+
+        if direction == "outgoing":
+            query = f"""
+            MATCH (e:Entity {{id: $entity_id}})-[r:RELATES_TO]->(other:Entity)
+            WHERE 1=1 {rel_filter}
+            RETURN e.name as source, other.name as target, other.id as target_id,
+                   r.relationship as relationship, r.timestamp as timestamp,
+                   r.description as description, r.confidence as confidence,
+                   r.valid_from as valid_from, r.valid_to as valid_to
+            """
+        elif direction == "incoming":
+            query = f"""
+            MATCH (other:Entity)-[r:RELATES_TO]->(e:Entity {{id: $entity_id}})
+            WHERE 1=1 {rel_filter}
+            RETURN other.name as source, other.id as source_id, e.name as target,
+                   r.relationship as relationship, r.timestamp as timestamp,
+                   r.description as description, r.confidence as confidence,
+                   r.valid_from as valid_from, r.valid_to as valid_to
+            """
+        else:  # both
+            query = f"""
+            MATCH (e:Entity {{id: $entity_id}})-[r:RELATES_TO]-(other:Entity)
+            WHERE 1=1 {rel_filter}
+            RETURN e.name as source, other.name as target, other.id as other_id,
+                   r.relationship as relationship, r.timestamp as timestamp,
+                   r.description as description, r.confidence as confidence,
+                   r.valid_from as valid_from, r.valid_to as valid_to,
+                   CASE WHEN startNode(r) = e THEN 'outgoing' ELSE 'incoming' END as direction
+            """
+
+        results = self.client.execute_read_transaction(
+            query, {"entity_id": entity_id}
+        )
+
+        return results
+
+    def get_relationship_path(
+        self,
+        source_entity_id: str,
+        target_entity_id: str,
+        max_hops: int = 3,
+    ) -> List[Dict]:
+        """
+        Find relationship paths between two entities.
+
+        Args:
+            source_entity_id: Source entity ID
+            target_entity_id: Target entity ID
+            max_hops: Maximum path length
+
+        Returns:
+            List of paths with relationships (temporal quadruples)
+        """
+        query = f"""
+        MATCH path = shortestPath(
+            (source:Entity {{id: $source_id}})-[r:RELATES_TO*1..{max_hops}]-(target:Entity {{id: $target_id}})
+        )
+        RETURN [node in nodes(path) | node.name] as entities,
+               [rel in relationships(path) | {{
+                   relationship: rel.relationship,
+                   timestamp: rel.timestamp,
+                   description: rel.description
+               }}] as relationships,
+               length(path) as path_length
+        """
+
+        results = self.client.execute_read_transaction(query, {
+            "source_id": source_entity_id,
+            "target_id": target_entity_id,
+        })
+
+        return results
 
     # ===== Query Operations =====
 

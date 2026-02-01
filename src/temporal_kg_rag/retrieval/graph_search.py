@@ -1,27 +1,80 @@
-"""Graph-based search using entity relationships and traversal."""
+"""
+Graph-based search using entity relationships and traversal.
 
-from typing import Dict, List, Optional, Set
+Supports two traversal modes (configurable via settings.enable_ppr_traversal):
+1. Standard: Direct entity matching and BFS traversal
+2. PPR: Personalized PageRank with temporal decay (state-of-the-art)
+"""
+
+import re
+from typing import Dict, List, Optional, Set, TYPE_CHECKING
 
 from temporal_kg_rag.config.settings import get_settings
 from temporal_kg_rag.graph.neo4j_client import Neo4jClient, get_neo4j_client
 from temporal_kg_rag.models.temporal import TemporalFilter
 from temporal_kg_rag.utils.logger import get_logger
 
+if TYPE_CHECKING:
+    from temporal_kg_rag.retrieval.ppr_traversal import PPRTraversal
+
 logger = get_logger(__name__)
 
 
 class GraphSearch:
-    """Graph-based search using entity relationships."""
+    """
+    Graph-based search using entity relationships.
 
-    def __init__(self, client: Optional[Neo4jClient] = None):
+    Supports two traversal modes:
+    - Standard: Direct entity matching and BFS traversal
+    - PPR: Personalized PageRank with temporal decay
+
+    Toggle PPR mode via settings.enable_ppr_traversal or use_ppr parameter.
+    """
+
+    def __init__(
+        self,
+        client: Optional[Neo4jClient] = None,
+        use_ppr: Optional[bool] = None,
+    ):
         """
         Initialize graph search.
 
         Args:
             client: Optional Neo4j client
+            use_ppr: Override for PPR mode (None uses settings)
         """
         self.client = client or get_neo4j_client()
         self.settings = get_settings()
+
+        # Determine if PPR should be used
+        self._use_ppr = (
+            use_ppr
+            if use_ppr is not None
+            else self.settings.enable_ppr_traversal
+        )
+
+        # Lazy-load PPR traversal
+        self._ppr_traversal: Optional["PPRTraversal"] = None
+
+        logger.info(f"GraphSearch initialized with PPR mode: {self._use_ppr}")
+
+    @property
+    def ppr_traversal(self) -> "PPRTraversal":
+        """Lazy-load PPR traversal to avoid circular imports."""
+        if self._ppr_traversal is None:
+            from temporal_kg_rag.retrieval.ppr_traversal import PPRTraversal
+            self._ppr_traversal = PPRTraversal(client=self.client)
+        return self._ppr_traversal
+
+    def set_ppr_mode(self, enabled: bool) -> None:
+        """
+        Enable or disable PPR mode at runtime.
+
+        Args:
+            enabled: Whether to use PPR-based traversal
+        """
+        self._use_ppr = enabled
+        logger.info(f"PPR mode {'enabled' if enabled else 'disabled'}")
 
     def search_by_entities(
         self,
@@ -313,10 +366,7 @@ class GraphSearch:
 
     def extract_entities_from_query(self, query: str) -> List[str]:
         """
-        Extract potential entity names from query text.
-
-        This is a simple implementation that looks for capitalized words.
-        Could be enhanced with NER.
+        Extract potential entity names from query text using LLM-based NER.
 
         Args:
             query: Query text
@@ -324,21 +374,78 @@ class GraphSearch:
         Returns:
             List of potential entity names
         """
-        import re
+        import json
+        import httpx
 
-        # Find sequences of capitalized words
-        pattern = r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b'
-        entities = re.findall(pattern, query)
+        settings = get_settings()
 
-        # Deduplicate while preserving order
-        seen = set()
-        unique_entities = []
-        for entity in entities:
-            if entity not in seen:
-                seen.add(entity)
-                unique_entities.append(entity)
+        # Use LLM to extract entities from the query
+        prompt = f"""Extract named entities (people, organizations, locations, products, events, etc.) from the following query.
+Return ONLY a JSON array of entity names. Do not include generic question words like "what", "when", "how", etc.
 
-        return unique_entities
+Query: {query}
+
+Return format: ["Entity1", "Entity2", ...]
+
+If no entities are found, return an empty array: []"""
+
+        try:
+            client = httpx.Client(timeout=30.0)
+            response = client.post(
+                f"{settings.litellm_api_base}/chat/completions",
+                json={
+                    "model": settings.entity_extraction_model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0.0,
+                    "max_tokens": 500,
+                },
+                headers={"Authorization": f"Bearer {settings.litellm_api_key}"}
+            )
+            response.raise_for_status()
+
+            content = response.json()["choices"][0]["message"]["content"].strip()
+
+            # Parse JSON response
+            # Try to extract JSON array from content
+            json_match = re.search(r'\[.*\]', content, re.DOTALL)
+            if json_match:
+                entities = json.loads(json_match.group())
+
+                # Filter out empty strings and duplicates
+                unique_entities = []
+                seen = set()
+                for entity in entities:
+                    entity_str = str(entity).strip()
+                    if entity_str and entity_str.lower() not in seen:
+                        seen.add(entity_str.lower())
+                        unique_entities.append(entity_str)
+
+                logger.info(f"LLM extracted {len(unique_entities)} entities from query: {unique_entities}")
+                return unique_entities
+            else:
+                logger.warning(f"Could not parse JSON from LLM response: {content}")
+                return []
+
+        except Exception as e:
+            logger.error(f"LLM entity extraction failed: {e}, falling back to regex")
+
+            # Fallback to simple regex
+            pattern = r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b'
+            entities = re.findall(pattern, query)
+
+            # Filter out common question words
+            question_words = {'What', 'When', 'Where', 'Who', 'How', 'Why', 'Which'}
+            entities = [e for e in entities if e not in question_words]
+
+            # Deduplicate
+            seen = set()
+            unique_entities = []
+            for entity in entities:
+                if entity not in seen:
+                    seen.add(entity)
+                    unique_entities.append(entity)
+
+            return unique_entities
 
     def search(
         self,
@@ -346,6 +453,7 @@ class GraphSearch:
         top_k: int = 10,
         temporal_filter: Optional[TemporalFilter] = None,
         use_entity_extraction: bool = True,
+        use_ppr: Optional[bool] = None,
     ) -> List[Dict]:
         """
         Main graph search method that tries multiple strategies.
@@ -355,11 +463,15 @@ class GraphSearch:
             top_k: Number of results to return
             temporal_filter: Optional temporal filter
             use_entity_extraction: Whether to extract entities from query
+            use_ppr: Override PPR mode for this search (None uses instance setting)
 
         Returns:
             List of search results
         """
-        logger.info(f"Graph search: '{query[:50]}...'")
+        # Determine if PPR should be used for this search
+        ppr_enabled = use_ppr if use_ppr is not None else self._use_ppr
+
+        logger.info(f"Graph search: '{query[:50]}...' (PPR: {ppr_enabled})")
 
         results = []
 
@@ -369,12 +481,23 @@ class GraphSearch:
 
             if entity_names:
                 logger.info(f"Extracted entities from query: {entity_names}")
-                results = self.search_by_entities(
-                    entity_names=entity_names,
-                    top_k=top_k,
-                    temporal_filter=temporal_filter,
-                    match_all=False,
-                )
+
+                if ppr_enabled:
+                    # Use PPR-based traversal
+                    logger.info("Using PPR-based traversal")
+                    results = self.ppr_traversal.search(
+                        seed_entities=entity_names,
+                        top_k=top_k,
+                        temporal_filter=temporal_filter,
+                    )
+                else:
+                    # Use standard entity-based search
+                    results = self.search_by_entities(
+                        entity_names=entity_names,
+                        top_k=top_k,
+                        temporal_filter=temporal_filter,
+                        match_all=False,
+                    )
 
         if not results:
             logger.info("No results from entity extraction, falling back to text search")
@@ -382,6 +505,54 @@ class GraphSearch:
             results = self._fulltext_search(query, top_k, temporal_filter)
 
         return results
+
+    def search_with_ppr(
+        self,
+        query: str,
+        top_k: int = 10,
+        temporal_filter: Optional[TemporalFilter] = None,
+    ) -> List[Dict]:
+        """
+        Explicitly use PPR-based search regardless of settings.
+
+        Args:
+            query: Search query
+            top_k: Number of results
+            temporal_filter: Optional temporal filter
+
+        Returns:
+            List of search results
+        """
+        return self.search(
+            query=query,
+            top_k=top_k,
+            temporal_filter=temporal_filter,
+            use_ppr=True,
+        )
+
+    def search_standard(
+        self,
+        query: str,
+        top_k: int = 10,
+        temporal_filter: Optional[TemporalFilter] = None,
+    ) -> List[Dict]:
+        """
+        Explicitly use standard search regardless of settings.
+
+        Args:
+            query: Search query
+            top_k: Number of results
+            temporal_filter: Optional temporal filter
+
+        Returns:
+            List of search results
+        """
+        return self.search(
+            query=query,
+            top_k=top_k,
+            temporal_filter=temporal_filter,
+            use_ppr=False,
+        )
 
     def _fulltext_search(
         self,
