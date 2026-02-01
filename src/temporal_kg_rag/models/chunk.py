@@ -19,13 +19,30 @@ class Chunk(BaseModel):
     )
     chunk_index: int = Field(..., description="Position in document (0-indexed)")
     token_count: int = Field(..., description="Number of tokens in chunk")
+
+    # Temporal fields for content-based time (e.g., fiscal period)
+    # These represent WHEN the content is about, not when it was ingested
+    fiscal_year: Optional[int] = Field(
+        None,
+        description="Fiscal year the content refers to (e.g., 2021)",
+    )
+    fiscal_quarter: Optional[str] = Field(
+        None,
+        description="Fiscal quarter the content refers to (e.g., 'Q1', 'Q2', 'Q3', 'Q4')",
+    )
+    fiscal_period_end: Optional[datetime] = Field(
+        None,
+        description="End date of the fiscal period (e.g., 2021-03-31 for Q1 2021)",
+    )
+
+    # System timestamps (for internal tracking only, not for temporal queries)
     created_at: datetime = Field(
         default_factory=datetime.now,
-        description="Chunk creation timestamp",
+        description="System timestamp when chunk was ingested (internal use only)",
     )
     updated_at: datetime = Field(
         default_factory=datetime.now,
-        description="Chunk last update timestamp",
+        description="System timestamp when chunk was last updated (internal use only)",
     )
     version: int = Field(default=1, description="Chunk version number")
     is_current: bool = Field(
@@ -67,6 +84,11 @@ class Chunk(BaseModel):
             "text": self.text,
             "chunk_index": self.chunk_index,
             "token_count": self.token_count,
+            # Temporal content fields (for queries)
+            "fiscal_year": self.fiscal_year,
+            "fiscal_quarter": self.fiscal_quarter,
+            "fiscal_period_end": self.fiscal_period_end,
+            # System timestamps (internal use)
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "version": self.version,

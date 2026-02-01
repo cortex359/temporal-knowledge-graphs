@@ -105,9 +105,9 @@ class IngestionPipeline:
             logger.info("Step 2/7: Creating document node...")
             self.graph_ops.create_document(document)
 
-            # Step 3: Chunk text
+            # Step 3: Chunk text (with fiscal period metadata from document)
             logger.info("Step 3/7: Chunking text...")
-            chunks = self._chunk_text(text, document.id)
+            chunks = self._chunk_text(text, document.id, document.metadata)
 
             # Step 4: Generate embeddings
             if generate_embeddings:
@@ -214,9 +214,63 @@ class IngestionPipeline:
 
         return document, text
 
-    def _chunk_text(self, text: str, document_id: str) -> List[Chunk]:
-        """Chunk text into segments."""
-        chunks = self.chunker.chunk_text(text, document_id, strategy="semantic")
+    def _chunk_text(
+        self,
+        text: str,
+        document_id: str,
+        document_metadata: Optional[Dict] = None,
+    ) -> List[Chunk]:
+        """
+        Chunk text into segments.
+
+        Args:
+            text: Text to chunk
+            document_id: Document ID
+            document_metadata: Optional metadata containing fiscal period info
+
+        Returns:
+            List of Chunk objects
+        """
+        # Extract fiscal period from document metadata
+        fiscal_year = None
+        fiscal_quarter = None
+        fiscal_period_end = None
+
+        if document_metadata:
+            # Get year (can be string or int)
+            year_val = document_metadata.get("year")
+            if year_val:
+                try:
+                    fiscal_year = int(year_val)
+                except (ValueError, TypeError):
+                    pass
+
+            # Get quarter (normalize to uppercase Q1-Q4)
+            quarter_val = document_metadata.get("quarter")
+            if quarter_val:
+                fiscal_quarter = str(quarter_val).upper()
+                if not fiscal_quarter.startswith("Q"):
+                    fiscal_quarter = f"Q{fiscal_quarter}"
+
+            # Calculate fiscal period end date
+            if fiscal_year and fiscal_quarter:
+                quarter_end_months = {"Q1": 3, "Q2": 6, "Q3": 9, "Q4": 12}
+                month = quarter_end_months.get(fiscal_quarter, 12)
+                day = 31 if month in [1, 3, 5, 7, 8, 10, 12] else 30
+                try:
+                    from datetime import datetime
+                    fiscal_period_end = datetime(fiscal_year, month, day)
+                except ValueError:
+                    pass
+
+        chunks = self.chunker.chunk_text(
+            text,
+            document_id,
+            strategy="semantic",
+            fiscal_year=fiscal_year,
+            fiscal_quarter=fiscal_quarter,
+            fiscal_period_end=fiscal_period_end,
+        )
 
         total_tokens = sum(chunk.token_count for chunk in chunks)
         avg_tokens = total_tokens / len(chunks) if chunks else 0
@@ -224,6 +278,8 @@ class IngestionPipeline:
         logger.info(f"  Created {len(chunks)} chunks")
         logger.info(f"  Total tokens: {total_tokens:,}")
         logger.info(f"  Average tokens per chunk: {avg_tokens:.0f}")
+        if fiscal_year and fiscal_quarter:
+            logger.info(f"  Fiscal period: {fiscal_quarter} {fiscal_year}")
 
         return chunks
 

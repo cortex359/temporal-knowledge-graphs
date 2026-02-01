@@ -88,13 +88,14 @@ class VectorSearch:
             node.text AS text,
             node.chunk_index AS chunk_index,
             node.token_count AS token_count,
-            node.created_at AS created_at,
+            node.fiscal_year AS fiscal_year,
+            node.fiscal_quarter AS fiscal_quarter,
+            node.fiscal_period_end AS fiscal_period_end,
             node.version AS version,
             score,
             doc.id AS document_id,
             doc.title AS document_title,
             doc.source AS document_source,
-            doc.created_at AS document_date,
             entities
         ORDER BY score DESC
         LIMIT $top_k

@@ -36,11 +36,12 @@ stop_process() {
 stop_process "Graph Visualization" "logs/graph_viz.pid"
 stop_process "Chunk Retrieval" "logs/chunk_retrieval.pid"
 stop_process "RAG Chatbot" "logs/chatbot.pid"
+stop_process "Visual Search" "logs/visual_search.pid"
 
 # Also kill any streamlit processes on the ports
 echo ""
 echo "Checking for remaining processes on ports..."
-for port in 8501 8502 8503; do
+for port in 8501 8502 8503 8504; do
     if lsof -Pi :$port -sTCP:LISTEN -t >/dev/null 2>&1; then
         echo "  Killing process on port $port..."
         kill $(lsof -t -i:$port) 2>/dev/null || true

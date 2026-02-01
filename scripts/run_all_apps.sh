@@ -1,5 +1,5 @@
 #!/bin/bash
-# Script to launch all three Streamlit applications
+# Script to launch all four Streamlit applications
 
 echo "🚀 Starting all Streamlit applications..."
 echo ""
@@ -29,7 +29,7 @@ check_port() {
 }
 
 # Check and kill existing processes on ports
-for port in 8501 8502 8503; do
+for port in 8501 8502 8503 8504; do
     if check_port $port; then
         echo "⚠️  Port $port is already in use. Killing existing process..."
         kill $(lsof -t -i:$port) 2>/dev/null || true
@@ -42,6 +42,7 @@ echo "📊 Launching applications:"
 echo "  - Graph Visualization: http://localhost:8501"
 echo "  - Chunk Retrieval: http://localhost:8502"
 echo "  - RAG Chatbot: http://localhost:8503"
+echo "  - Visual Search: http://localhost:8504"
 echo ""
 
 # Create log directory
@@ -73,6 +74,15 @@ nohup uv run streamlit run apps/3_chatbot.py \
     > logs/chatbot.log 2>&1 &
 echo $! > logs/chatbot.pid
 
+sleep 2
+
+echo "Starting Visual Search..."
+nohup uv run streamlit run apps/4_visual_search.py \
+    --server.port 8504 \
+    --server.headless true \
+    > logs/visual_search.log 2>&1 &
+echo $! > logs/visual_search.pid
+
 sleep 3
 
 echo ""
@@ -82,16 +92,19 @@ echo "📝 Process IDs:"
 echo "  - Graph Visualization: $(cat logs/graph_viz.pid)"
 echo "  - Chunk Retrieval: $(cat logs/chunk_retrieval.pid)"
 echo "  - RAG Chatbot: $(cat logs/chatbot.pid)"
+echo "  - Visual Search: $(cat logs/visual_search.pid)"
 echo ""
 echo "🌐 Access the applications:"
 echo "  - Graph Visualization: http://localhost:8501"
 echo "  - Chunk Retrieval: http://localhost:8502"
 echo "  - RAG Chatbot: http://localhost:8503"
+echo "  - Visual Search: http://localhost:8504"
 echo ""
 echo "📋 View logs:"
 echo "  - tail -f logs/graph_visualization.log"
 echo "  - tail -f logs/chunk_retrieval.log"
 echo "  - tail -f logs/chatbot.log"
+echo "  - tail -f logs/visual_search.log"
 echo ""
 echo "🛑 To stop all applications, run:"
 echo "  ./scripts/stop_all_apps.sh"

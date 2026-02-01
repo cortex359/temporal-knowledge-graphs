@@ -384,7 +384,9 @@ class PPRTraversal:
             c.id as chunk_id,
             c.text as text,
             c.chunk_index as chunk_index,
-            c.created_at as created_at,
+            c.fiscal_year as fiscal_year,
+            c.fiscal_quarter as fiscal_quarter,
+            c.fiscal_period_end as fiscal_period_end,
             doc.id as document_id,
             doc.title as document_title,
             mentioned_entities
@@ -422,12 +424,12 @@ class PPRTraversal:
                         "ppr_score": ppr_contribution,
                     })
 
-        # Apply temporal decay to chunk scores based on created_at
+        # Apply temporal decay to chunk scores based on fiscal_period_end
         if temporal_filter and temporal_filter.point_in_time:
             query_time = temporal_filter.point_in_time
             for chunk_id, chunk_data in chunk_scores.items():
-                if chunk_data.get("created_at"):
-                    age_years = (query_time - chunk_data["created_at"]).days / 365.0
+                if chunk_data.get("fiscal_period_end"):
+                    age_years = (query_time - chunk_data["fiscal_period_end"]).days / 365.0
                     decay = self.temporal_decay ** max(0, age_years)
                     chunk_data["ppr_score"] *= decay
                     chunk_data["temporal_decay_applied"] = decay

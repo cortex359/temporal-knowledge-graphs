@@ -1,19 +1,21 @@
 """
-Temporal query data models with bi-temporal support.
+Temporal query data models for fiscal period-based filtering.
 
-This module implements a bi-temporal model following Zep/Graphiti architecture:
-- Event time (valid_from/valid_to): When the fact was actually true
-- Transaction time (created_at/expired_at): When the fact was recorded/invalidated
+This module implements temporal filtering based on document content time
+(fiscal year/quarter), NOT system timestamps like created_at.
+
+Key principle: The temporal relevance comes from WHEN THE CONTENT IS ABOUT
+(e.g., "Q1 2021 Earnings Call"), not when it was ingested into the system.
 
 This enables:
-- Point-in-time queries ("What was true on date X?")
-- Transaction-time queries ("What did we know on date Y?")
-- Bi-temporal queries ("What did we believe was true about X at time Y?")
+- Fiscal period queries ("What happened in Q1 2021?")
+- Year range queries ("Between 2020 and 2023")
+- Latest fiscal period queries ("Most recent quarter")
 """
 
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -21,55 +23,70 @@ from pydantic import BaseModel, Field
 class TemporalQueryType(str, Enum):
     """Type of temporal query."""
 
-    POINT_IN_TIME = "point_in_time"  # Query as of a specific date
-    TIME_RANGE = "time_range"  # Query within a time range
+    POINT_IN_TIME = "point_in_time"  # Query for a specific fiscal period
+    TIME_RANGE = "time_range"  # Query within a fiscal year/quarter range
     LATEST = "latest"  # Query for latest/current information
-    HISTORY = "history"  # Query for historical changes
-    BITEMPORAL = "bitemporal"  # Query with both event and transaction time
+    HISTORY = "history"  # Query for all historical data
 
 
 class TemporalFilter(BaseModel):
     """
-    Temporal filter for queries with bi-temporal support.
+    Temporal filter for queries based on fiscal periods.
 
-    Supports two temporal dimensions:
-    - Event time: When the fact was actually true (valid_from/valid_to)
-    - Transaction time: When the fact was recorded (created_at/expired_at)
+    Filters are based on content time (fiscal_year, fiscal_quarter),
+    NOT system timestamps (created_at).
     """
 
     query_type: TemporalQueryType = Field(
         default=TemporalQueryType.LATEST,
         description="Type of temporal query",
     )
+
+    # Fiscal period fields (primary temporal dimension)
+    fiscal_year: Optional[int] = Field(
+        None,
+        description="Fiscal year to filter by (e.g., 2021)",
+    )
+    fiscal_quarter: Optional[str] = Field(
+        None,
+        description="Fiscal quarter to filter by (e.g., 'Q1', 'Q2', 'Q3', 'Q4')",
+    )
+
+    # For range queries
+    start_year: Optional[int] = Field(
+        None,
+        description="Start year for TIME_RANGE queries",
+    )
+    end_year: Optional[int] = Field(
+        None,
+        description="End year for TIME_RANGE queries",
+    )
+    start_quarter: Optional[str] = Field(
+        None,
+        description="Start quarter for TIME_RANGE queries",
+    )
+    end_quarter: Optional[str] = Field(
+        None,
+        description="End quarter for TIME_RANGE queries",
+    )
+
+    # Legacy fields for backward compatibility (converted to fiscal period)
     point_in_time: Optional[datetime] = Field(
         None,
-        description="Specific point in time for POINT_IN_TIME queries (event time)",
+        description="Specific point in time (will be converted to fiscal period)",
     )
     start_time: Optional[datetime] = Field(
         None,
-        description="Start of time range for TIME_RANGE queries (event time)",
+        description="Start of time range (will be converted to fiscal period)",
     )
     end_time: Optional[datetime] = Field(
         None,
-        description="End of time range for TIME_RANGE queries (event time)",
+        description="End of time range (will be converted to fiscal period)",
     )
+
     include_superseded: bool = Field(
         default=False,
         description="Include superseded/historical versions",
-    )
-
-    # Bi-temporal fields (transaction time dimension)
-    transaction_time: Optional[datetime] = Field(
-        None,
-        description="Transaction time for bi-temporal queries (what we knew at this time)",
-    )
-    transaction_start: Optional[datetime] = Field(
-        None,
-        description="Transaction time range start for bi-temporal queries",
-    )
-    transaction_end: Optional[datetime] = Field(
-        None,
-        description="Transaction time range end for bi-temporal queries",
     )
 
     class Config:
@@ -77,15 +94,57 @@ class TemporalFilter(BaseModel):
 
         json_encoders = {datetime: lambda v: v.isoformat()}
 
+    def _datetime_to_fiscal(self, dt: datetime) -> tuple[int, str]:
+        """Convert datetime to fiscal year and quarter."""
+        year = dt.year
+        month = dt.month
+
+        if month <= 3:
+            quarter = "Q1"
+        elif month <= 6:
+            quarter = "Q2"
+        elif month <= 9:
+            quarter = "Q3"
+        else:
+            quarter = "Q4"
+
+        return year, quarter
+
+    def _get_effective_fiscal_period(self) -> tuple[Optional[int], Optional[str]]:
+        """Get effective fiscal year/quarter, converting from datetime if needed."""
+        if self.fiscal_year is not None:
+            return self.fiscal_year, self.fiscal_quarter
+
+        if self.point_in_time:
+            return self._datetime_to_fiscal(self.point_in_time)
+
+        return None, None
+
+    def _get_effective_range(self) -> tuple[Optional[int], Optional[str], Optional[int], Optional[str]]:
+        """Get effective fiscal range, converting from datetime if needed."""
+        start_year = self.start_year
+        start_quarter = self.start_quarter
+        end_year = self.end_year
+        end_quarter = self.end_quarter
+
+        if start_year is None and self.start_time:
+            start_year, start_quarter = self._datetime_to_fiscal(self.start_time)
+
+        if end_year is None and self.end_time:
+            end_year, end_quarter = self._datetime_to_fiscal(self.end_time)
+
+        return start_year, start_quarter, end_year, end_quarter
+
     def to_cypher_where_clause(self, node_var: str = "node", rel_var: Optional[str] = None) -> str:
         """
         Generate Cypher WHERE clause for this temporal filter.
 
-        Supports bi-temporal filtering on both nodes and relationships.
+        Filters based on fiscal_year and fiscal_quarter properties,
+        NOT on system timestamps like created_at.
 
         Args:
             node_var: Variable name for the node in the Cypher query
-            rel_var: Optional variable name for relationship (for bi-temporal)
+            rel_var: Optional variable name for relationship (unused)
 
         Returns:
             Cypher WHERE clause string
@@ -95,42 +154,39 @@ class TemporalFilter(BaseModel):
         if self.query_type == TemporalQueryType.LATEST and not self.include_superseded:
             clauses.append(f"{node_var}.is_current = true")
 
-        elif self.query_type == TemporalQueryType.POINT_IN_TIME and self.point_in_time:
-            # Event time: when was this fact true?
-            clauses.append(f"{node_var}.created_at <= $point_in_time")
-            # Handle case where superseded_at property might not exist in DB
-            # Use coalesce pattern: check is_current OR superseded_at > point_in_time
-            clauses.append(
-                f"({node_var}.is_current = true OR {node_var}.superseded_at > $point_in_time)"
-            )
-            # Note: Relationship temporal filtering is disabled as most relationships
-            # don't have valid_from/valid_to properties in the current schema.
+        elif self.query_type == TemporalQueryType.POINT_IN_TIME:
+            # Filter by specific fiscal period
+            fiscal_year, fiscal_quarter = self._get_effective_fiscal_period()
+
+            if fiscal_year:
+                clauses.append(f"{node_var}.fiscal_year = $fiscal_year")
+            if fiscal_quarter:
+                clauses.append(f"{node_var}.fiscal_quarter = $fiscal_quarter")
+
+            if not self.include_superseded:
+                clauses.append(f"{node_var}.is_current = true")
 
         elif self.query_type == TemporalQueryType.TIME_RANGE:
-            if self.start_time:
-                clauses.append(f"{node_var}.created_at >= $start_time")
-            if self.end_time:
-                clauses.append(f"{node_var}.created_at <= $end_time")
-            # Note: Relationship temporal filtering is disabled as most relationships
-            # don't have valid_from/valid_to properties in the current schema.
-            # Enable when bi-temporal relationships are fully implemented.
+            # Filter by fiscal year/quarter range
+            start_year, start_quarter, end_year, end_quarter = self._get_effective_range()
 
-        elif self.query_type == TemporalQueryType.BITEMPORAL:
-            # Bi-temporal query: filter by both event time and transaction time
-            if self.point_in_time:
-                # Event time filter - use created_at as proxy for valid_from
-                clauses.append(f"{node_var}.created_at <= $point_in_time")
-                clauses.append(
-                    f"({node_var}.is_current = true OR {node_var}.superseded_at > $point_in_time)"
-                )
-            if self.transaction_time:
-                # Transaction time filter: what did we know at this time?
-                clauses.append(f"{node_var}.created_at <= $transaction_time")
-            # Note: Relationship bi-temporal filtering is disabled as most relationships
-            # don't have valid_from/valid_to properties in the current schema.
+            if start_year is not None:
+                clauses.append(f"{node_var}.fiscal_year >= $start_year")
+            if end_year is not None:
+                clauses.append(f"{node_var}.fiscal_year <= $end_year")
+
+            # Quarter filtering for single-year ranges
+            if start_year is not None and end_year is not None and start_year == end_year:
+                if start_quarter:
+                    clauses.append(f"{node_var}.fiscal_quarter >= $start_quarter")
+                if end_quarter:
+                    clauses.append(f"{node_var}.fiscal_quarter <= $end_quarter")
+
+            if not self.include_superseded:
+                clauses.append(f"{node_var}.is_current = true")
 
         elif self.query_type == TemporalQueryType.HISTORY:
-            # Include all versions, no filters
+            # Include all versions, no fiscal period filters
             pass
 
         return " AND ".join(clauses) if clauses else "true"
@@ -139,35 +195,110 @@ class TemporalFilter(BaseModel):
         """Get parameters for Cypher query."""
         params = {}
 
-        if self.point_in_time:
-            params["point_in_time"] = self.point_in_time
+        # Fiscal period parameters
+        fiscal_year, fiscal_quarter = self._get_effective_fiscal_period()
+        if fiscal_year is not None:
+            params["fiscal_year"] = fiscal_year
+        if fiscal_quarter:
+            params["fiscal_quarter"] = fiscal_quarter
 
-        if self.start_time:
-            params["start_time"] = self.start_time
-
-        if self.end_time:
-            params["end_time"] = self.end_time
-
-        # Bi-temporal parameters
-        if self.transaction_time:
-            params["transaction_time"] = self.transaction_time
-
-        if self.transaction_start:
-            params["transaction_start"] = self.transaction_start
-
-        if self.transaction_end:
-            params["transaction_end"] = self.transaction_end
+        # Range parameters
+        start_year, start_quarter, end_year, end_quarter = self._get_effective_range()
+        if start_year is not None:
+            params["start_year"] = start_year
+        if end_year is not None:
+            params["end_year"] = end_year
+        if start_quarter:
+            params["start_quarter"] = start_quarter
+        if end_quarter:
+            params["end_quarter"] = end_quarter
 
         return params
 
     @classmethod
     def create_latest(cls) -> "TemporalFilter":
-        """Create a filter for latest information."""
+        """Create a filter for latest/current information."""
         return cls(query_type=TemporalQueryType.LATEST)
 
     @classmethod
+    def create_fiscal_period(
+        cls,
+        year: int,
+        quarter: Optional[str] = None,
+    ) -> "TemporalFilter":
+        """
+        Create a filter for a specific fiscal period.
+
+        Args:
+            year: Fiscal year (e.g., 2021)
+            quarter: Optional fiscal quarter (e.g., 'Q1', 'Q2', 'Q3', 'Q4')
+
+        Returns:
+            Fiscal period filter
+        """
+        # Normalize quarter to uppercase
+        if quarter:
+            quarter = quarter.upper()
+            if not quarter.startswith("Q"):
+                quarter = f"Q{quarter}"
+
+        return cls(
+            query_type=TemporalQueryType.POINT_IN_TIME,
+            fiscal_year=year,
+            fiscal_quarter=quarter,
+        )
+
+    @classmethod
+    def create_fiscal_range(
+        cls,
+        start_year: Optional[int] = None,
+        end_year: Optional[int] = None,
+        start_quarter: Optional[str] = None,
+        end_quarter: Optional[str] = None,
+    ) -> "TemporalFilter":
+        """
+        Create a filter for a fiscal year/quarter range.
+
+        Args:
+            start_year: Start fiscal year
+            end_year: End fiscal year
+            start_quarter: Optional start quarter
+            end_quarter: Optional end quarter
+
+        Returns:
+            Fiscal range filter
+        """
+        # Normalize quarters
+        if start_quarter:
+            start_quarter = start_quarter.upper()
+            if not start_quarter.startswith("Q"):
+                start_quarter = f"Q{start_quarter}"
+        if end_quarter:
+            end_quarter = end_quarter.upper()
+            if not end_quarter.startswith("Q"):
+                end_quarter = f"Q{end_quarter}"
+
+        return cls(
+            query_type=TemporalQueryType.TIME_RANGE,
+            start_year=start_year,
+            end_year=end_year,
+            start_quarter=start_quarter,
+            end_quarter=end_quarter,
+        )
+
+    @classmethod
     def create_point_in_time(cls, timestamp: datetime) -> "TemporalFilter":
-        """Create a filter for a specific point in time."""
+        """
+        Create a filter for a specific point in time.
+
+        The datetime will be converted to the corresponding fiscal period.
+
+        Args:
+            timestamp: Point in time (will be converted to fiscal period)
+
+        Returns:
+            Fiscal period filter
+        """
         return cls(
             query_type=TemporalQueryType.POINT_IN_TIME,
             point_in_time=timestamp,
@@ -179,7 +310,18 @@ class TemporalFilter(BaseModel):
         start: Optional[datetime] = None,
         end: Optional[datetime] = None,
     ) -> "TemporalFilter":
-        """Create a filter for a time range."""
+        """
+        Create a filter for a time range.
+
+        The datetimes will be converted to fiscal periods.
+
+        Args:
+            start: Start time (will be converted to fiscal period)
+            end: End time (will be converted to fiscal period)
+
+        Returns:
+            Fiscal range filter
+        """
         return cls(
             query_type=TemporalQueryType.TIME_RANGE,
             start_time=start,
@@ -188,51 +330,10 @@ class TemporalFilter(BaseModel):
 
     @classmethod
     def create_history(cls) -> "TemporalFilter":
-        """Create a filter for historical queries (all versions)."""
+        """Create a filter for historical queries (all fiscal periods)."""
         return cls(
             query_type=TemporalQueryType.HISTORY,
             include_superseded=True,
-        )
-
-    @classmethod
-    def create_bitemporal(
-        cls,
-        event_time: Optional[datetime] = None,
-        transaction_time: Optional[datetime] = None,
-    ) -> "TemporalFilter":
-        """
-        Create a bi-temporal filter.
-
-        Args:
-            event_time: When was the fact true? (valid time)
-            transaction_time: What did we know at this time? (transaction time)
-
-        Returns:
-            Bi-temporal filter
-        """
-        return cls(
-            query_type=TemporalQueryType.BITEMPORAL,
-            point_in_time=event_time,
-            transaction_time=transaction_time,
-        )
-
-    @classmethod
-    def create_as_of_transaction(cls, transaction_time: datetime) -> "TemporalFilter":
-        """
-        Create a filter for "what did we know at time X?"
-
-        This returns the state of knowledge as it existed at transaction_time,
-        regardless of when the facts were actually true.
-
-        Args:
-            transaction_time: The point in transaction time to query
-
-        Returns:
-            Transaction-time filter
-        """
-        return cls(
-            query_type=TemporalQueryType.BITEMPORAL,
-            transaction_time=transaction_time,
         )
 
 

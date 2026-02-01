@@ -1,6 +1,7 @@
 """Text chunking strategies for document processing."""
 
 import re
+from datetime import datetime
 from typing import List, Optional
 
 import tiktoken
@@ -58,6 +59,9 @@ class Chunker:
         text: str,
         document_id: Optional[str] = None,
         strategy: str = "semantic",
+        fiscal_year: Optional[int] = None,
+        fiscal_quarter: Optional[str] = None,
+        fiscal_period_end: Optional["datetime"] = None,
     ) -> List[Chunk]:
         """
         Chunk text into segments.
@@ -66,10 +70,18 @@ class Chunker:
             text: Text to chunk
             document_id: Optional document ID to associate with chunks
             strategy: Chunking strategy ('semantic' or 'fixed')
+            fiscal_year: Fiscal year the content refers to (e.g., 2021)
+            fiscal_quarter: Fiscal quarter the content refers to (e.g., 'Q1')
+            fiscal_period_end: End date of the fiscal period
 
         Returns:
             List of Chunk objects
         """
+        # Store temporal metadata for use in _create_chunk
+        self._fiscal_year = fiscal_year
+        self._fiscal_quarter = fiscal_quarter
+        self._fiscal_period_end = fiscal_period_end
+
         if strategy == "semantic":
             return self._chunk_semantic(text, document_id)
         elif strategy == "fixed":
@@ -279,6 +291,10 @@ class Chunker:
             chunk_index=chunk_index,
             token_count=token_count,
             document_id=document_id,
+            # Temporal metadata from document
+            fiscal_year=getattr(self, "_fiscal_year", None),
+            fiscal_quarter=getattr(self, "_fiscal_quarter", None),
+            fiscal_period_end=getattr(self, "_fiscal_period_end", None),
         )
 
     def count_tokens(self, text: str) -> int:
