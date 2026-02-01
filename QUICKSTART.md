@@ -6,7 +6,8 @@ This guide will help you get the system up and running in 15 minutes.
 
 - Docker and Docker Compose installed
 - Python 3.10 or higher
-- OpenAI API key
+- External LiteLLM service (for LLM and embeddings)
+- `uv` package manager
 - 4GB RAM minimum
 
 ## Step-by-Step Setup
@@ -31,8 +32,10 @@ NEO4J_USER=neo4j
 NEO4J_PASSWORD=password
 LITELLM_API_BASE=http://your-litellm-url:4000
 LITELLM_API_KEY=your-litellm-api-key
-EMBEDDING_MODEL=Qwen/Qwen3-Embedding-8B
-EMBEDDING_DIMENSIONS=4096
+DEFAULT_LLM_MODEL=default
+EMBEDDING_MODEL=text-embedding-3-large
+EMBEDDING_DIMENSIONS=3072
+ENABLE_PPR_TRAVERSAL=true
 ```
 
 ### 2. Start Docker Services (1 minute)
@@ -63,10 +66,10 @@ uv pip install -r requirements.txt
 
 ```bash
 # Initialize Neo4j schema (constraints, indexes, vector index)
-python scripts/init_db.py
+uv run python scripts/init_db.py
 
 # Verify schema
-python scripts/init_db.py --verify-only
+uv run python scripts/init_db.py --verify-only
 ```
 
 Expected output:
@@ -74,40 +77,42 @@ Expected output:
 ✓ Neo4j connectivity verified
 ✓ Constraints created
 ✓ Indexes created
-✓ Vector index created (1536 dimensions)
+✓ Vector index created (3072 dimensions)
 ```
 
-### 5. Ingest Sample Data (5 minutes)
+### 5. Ingest Documents (5 minutes)
 
 ```bash
-# Generate sample documents
-python scripts/sample_data.py --output-dir sample_data
-
 # Ingest documents into the knowledge graph
-python scripts/ingest_documents.py --path sample_data/ --pattern "*.txt"
+uv run python scripts/ingest_documents.py --path your_docs/ --pattern "*.pdf"
+
+# Or ingest with fiscal period metadata (for temporal filtering)
+uv run python scripts/ingest_documents.py \
+  --path earnings_call.txt \
+  --title "Q2 2021 Earnings Call" \
+  --metadata '{"year": 2021, "quarter": "Q2"}'
 ```
 
 This will:
-- Create 4 sample documents (AI, climate, quantum, healthcare)
-- Process ~50-100 chunks
-- Generate embeddings (using LiteLLM/Qwen embeddings)
-- Extract entities (using LLM via LiteLLM)
+- Process documents into chunks with fiscal period metadata
+- Generate embeddings (via LiteLLM)
+- Extract entities and relations (using LLM via LiteLLM)
 - Build the temporal knowledge graph
 
 ### 6. Test the System (2 minutes)
 
 ```bash
 # Test retrieval
-python scripts/test_retrieval.py --demo
+uv run python scripts/test_retrieval.py --demo
 
 # Test RAG system
-python scripts/test_rag.py --demo
+uv run python scripts/test_rag.py --demo
 ```
 
 ### 7. Launch Web Interfaces (1 minute)
 
 ```bash
-# Start all three Streamlit apps
+# Start all four Streamlit apps
 ./scripts/run_all_apps.sh
 ```
 
@@ -115,6 +120,7 @@ Access the applications:
 - **Graph Visualization**: http://localhost:8501
 - **Chunk Retrieval**: http://localhost:8502
 - **RAG Chatbot**: http://localhost:8503
+- **Visual Search**: http://localhost:8504
 
 ## Quick Test Workflow
 
@@ -140,13 +146,23 @@ Access the applications:
 
 ```bash
 # Ingest a new document
-python scripts/ingest_documents.py --path document.pdf --title "My Document"
+uv run python scripts/ingest_documents.py --path document.pdf --title "My Document"
+
+# Ingest with fiscal period metadata
+uv run python scripts/ingest_documents.py --path report.pdf --metadata '{"year": 2022, "quarter": "Q3"}'
 
 # Search with different methods
-python scripts/test_retrieval.py --query "quantum computing" --method hybrid
+uv run python scripts/test_retrieval.py --query "quarterly revenue" --method hybrid
 
-# Test temporal queries
-python scripts/test_rag.py --query "AI in 2023" --method langgraph --temporal
+# Test temporal/fiscal period queries
+uv run python scripts/test_rag.py --query "Revenue in Q2 2021" --method langgraph --temporal
+
+# Migrate fiscal period data (if chunks are missing fiscal_year)
+uv run python scripts/migrate_fiscal_periods.py --verify
+uv run python scripts/migrate_fiscal_periods.py
+
+# Consolidate entities (deduplication)
+uv run python scripts/consolidate_graph.py
 
 # Stop all Streamlit apps
 ./scripts/stop_all_apps.sh
@@ -156,8 +172,6 @@ python scripts/test_rag.py --query "AI in 2023" --method langgraph --temporal
 
 # View logs
 docker-compose logs neo4j
-docker-compose logs litellm
-tail -f logs/chatbot.log
 ```
 
 ## Troubleshooting
@@ -201,9 +215,18 @@ uv pip install -r requirements.txt
 lsof -ti:8501 | xargs kill
 lsof -ti:8502 | xargs kill
 lsof -ti:8503 | xargs kill
+lsof -ti:8504 | xargs kill
 
 # Or use different ports
-streamlit run apps/3_chatbot.py --server.port 9503
+uv run streamlit run apps/3_chatbot.py --server.port 9503
+```
+
+### Missing Fiscal Period Data
+```bash
+# If temporal queries return no results, migrate fiscal period data
+uv run python scripts/migrate_fiscal_periods.py --verify
+uv run python scripts/migrate_fiscal_periods.py --show-docs
+uv run python scripts/migrate_fiscal_periods.py
 ```
 
 ## Next Steps
@@ -212,37 +235,37 @@ streamlit run apps/3_chatbot.py --server.port 9503
 
 ```bash
 # PDF documents
-python scripts/ingest_documents.py --path /path/to/documents/ --pattern "*.pdf"
+uv run python scripts/ingest_documents.py --path /path/to/documents/ --pattern "*.pdf"
 
 # Markdown files
-python scripts/ingest_documents.py --path /path/to/docs/ --pattern "*.md" --recursive
+uv run python scripts/ingest_documents.py --path /path/to/docs/ --pattern "*.md" --recursive
 
-# With custom metadata
-python scripts/ingest_documents.py \
-  --path report.pdf \
-  --title "Annual Report 2024" \
-  --metadata '{"author": "John Doe", "department": "Engineering"}'
+# With fiscal period metadata (for temporal filtering)
+uv run python scripts/ingest_documents.py \
+  --path earnings_q2_2021.pdf \
+  --title "Q2 2021 Earnings Call" \
+  --metadata '{"year": 2021, "quarter": "Q2", "company": "Acme Corp"}'
 ```
 
 ### Explore Advanced Features
 
-1. **Temporal Queries**
-   - "What did we know about AI in 2022?"
-   - "Climate policy changes between 2020 and 2023"
-   - "Recent developments in quantum computing"
+1. **Fiscal Period Queries**
+   - "What were the Q2 2021 results?"
+   - "Revenue changes between 2020 and 2022"
+   - "Recent quarterly performance"
 
 2. **Entity-Based Search**
-   - Search for specific entities (people, organizations)
+   - Search for specific entities (people, organizations, products)
    - Explore entity relationships in the graph
-   - Filter by entity type
+   - PPR-based traversal from seed entities
 
 3. **Comparison Queries**
-   - "Compare GPT-3 and GPT-4"
-   - "Difference between supervised and unsupervised learning"
+   - "Compare Q1 2021 and Q1 2022 performance"
+   - "Difference between domestic and international sales"
 
 4. **Evolution Queries**
-   - "How has AI evolved over time?"
-   - "History of climate change policy"
+   - "How has revenue evolved over the quarters?"
+   - "History of product launches"
 
 ### Customize the System
 
@@ -261,15 +284,16 @@ python scripts/ingest_documents.py \
 ```
 User Query
     ↓
-[Web Interface]
+[Web Interface] (4 Streamlit apps)
     ↓
 [RAG System] ← [Prompt Templates]
     ↓
-[Hybrid Retrieval]
+[Hybrid Retrieval] (RRF Fusion)
     ├─ [Vector Search] (Neo4j vector index)
-    └─ [Graph Search] (Entity traversal)
+    ├─ [Graph Search] (Entity traversal)
+    └─ [PPR Traversal] (Personalized PageRank)
     ↓
-[Context Building] ← [Temporal Filter]
+[Context Building] ← [Fiscal Period Filter]
     ↓
 [LLM Generation] (via LiteLLM)
     ↓
@@ -280,8 +304,8 @@ User Query
 
 1. **For Large Datasets**
    - Reduce `top_k` in searches (default: 10)
-   - Enable temporal filtering to narrow results
-   - Use document-level filtering
+   - Enable fiscal period filtering to narrow results
+   - Use PPR traversal for entity-focused queries
 
 2. **For Faster Ingestion**
    - Skip entity extraction: `--no-entities`
@@ -291,6 +315,7 @@ User Query
    - Increase context expansion
    - Use LangGraph workflow (more thorough)
    - Enable conversation history in chatbot
+   - Include fiscal period metadata when ingesting
 
 ## Getting Help
 
@@ -308,14 +333,15 @@ User Query
 ## Important Notes
 
 - **LiteLLM Service**: This system requires an external LiteLLM service for both LLM and embeddings
-- **Embedding Model**: Uses `Qwen/Qwen3-Embedding-8B` with 4096 dimensions via LiteLLM
-- **Package Manager**: Uses `uv` for fast Python package management
+- **Embedding Model**: Configurable via `EMBEDDING_MODEL` (default: `text-embedding-3-large` with 3072 dimensions)
+- **Package Manager**: Uses `uv` for fast Python package management - always use `uv run python ...`
 - **No OpenAI Dependency**: All API calls go through LiteLLM proxy
+- **Fiscal Period Filtering**: Temporal queries filter by document content time (year/quarter), not ingestion time
 
 ---
 
-**Estimated Setup Time**: 13 minutes (reduced with uv)
+**Estimated Setup Time**: 15 minutes
 
 **Status**: Ready for production use
 
-**Last Updated**: 2026-01-13
+**Last Updated**: 2026-02-01

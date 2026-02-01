@@ -1,45 +1,39 @@
 # Temporal Knowledge Graph RAG System
 
-A powerful RAG (Retrieval-Augmented Generation) system that uses a temporal knowledge graph for document storage and retrieval with temporal awareness.
-
-## Disclaimer
-
-Große Teile der Codebasis und der Dokumentation wurden in Absprache mit Jan-Niklas Schagen mit Hilfsmitteln wie 
-Claude Code, Gemini, Codex und GitHub Copilot erstellt.
-Die Verwendung generativer KI hat uns eine umfangreiche Untersuchung des Themas _Temporal Knowledge Graphs_, den
-verschiedenen Herausforderungen und den praktischen Lösungsansätzen ermöglicht, da wir in kürzester Zeit ganz 
-verschiedene Ansätze prototypisch umsetzen und evaluieren konnten.
-Unsere Prüfungsleistung besteht somit nicht in dem vorliegenden Code, sondern in den Untersuchungen, die wir in unserem
-Vortrag vorstellen und einordnen werden. Der Code dient der Reproduktion der Ergebnisse und einer möglichen
-Weiterverwendung der implementierten Systeme.    
+A powerful RAG (Retrieval-Augmented Generation) system that uses a temporal knowledge graph for document storage and retrieval with temporal awareness. Designed for financial document analysis (earnings call transcripts) with fiscal period-based temporal filtering.
 
 ## Features
 
-- **Temporal Knowledge Graph**: Track how information evolves over time with document versioning, chunk supersession, and temporal relationships
-- **Hybrid Retrieval**: Combine vector similarity search with graph traversal for comprehensive retrieval
+- **Temporal Knowledge Graph**: Track how information evolves over time with fiscal period metadata (year/quarter), document versioning, chunk supersession, and temporal relationships
+- **Hybrid Retrieval**: Combine vector similarity search with graph traversal using Reciprocal Rank Fusion (RRF)
+- **PPR-based Graph Traversal**: Personalized PageRank for intelligent entity-based retrieval
 - **Neo4j Vector Index**: Native vector search capabilities integrated with graph queries
-- **Multi-format Document Support**: Ingest PDF, Markdown, HTML, and text documents
-- **Entity Extraction**: Automatic entity recognition and relationship mapping
-- **Three Web Interfaces**:
+- **Multi-format Document Support**: Ingest PDF, Markdown, HTML, text documents, and ECT-QA JSONL datasets
+- **Entity Extraction & Relation Extraction**: LLM-based NER and semantic relationship mapping
+- **Entity Deduplication**: Intelligent entity consolidation using embeddings, string similarity, and LLM validation
+- **Four Web Interfaces**:
   - Graph Visualization Explorer
   - Chunk Retrieval Interface
   - RAG Chatbot with Source Citations
+  - Visual Search Interface
 
 ## Architecture
 
-The system implements temporality at three levels:
-1. **Document-level**: Creation and modification timestamps
-2. **Chunk-level**: Version history with supersession tracking
-3. **Relationship-level**: Valid_from and valid_to dates on all relationships
+The system implements temporality at multiple levels:
+1. **Document-level**: Fiscal year and quarter metadata from document content
+2. **Chunk-level**: Fiscal period fields (`fiscal_year`, `fiscal_quarter`, `fiscal_period_end`) and version history with supersession tracking
+3. **Relationship-level**: `valid_from` and `valid_to` dates on all relationships
+4. **Bi-temporal Model**: Separation of event time (when content refers to) and transaction time (when ingested)
 
 ### Technology Stack
 
 - **Graph Database**: Neo4j 5.15+ with vector index
-- **Embeddings**: OpenAI Embeddings API
-- **LLM**: LiteLLM Proxy (OpenAI-compatible)
+- **Embeddings**: LiteLLM Proxy (configurable models, e.g., `text-embedding-3-large` or `Qwen/Qwen3-Embedding-8B`)
+- **LLM**: LiteLLM Proxy (OpenAI-compatible, for entity extraction, relation extraction, RAG generation)
 - **Web Framework**: Streamlit
 - **Python**: 3.10+
-- **Libraries**: LangChain, LangGraph, Neo4j Python driver, spaCy
+- **Package Manager**: uv (NOT pip)
+- **Libraries**: LangChain, LangGraph, Neo4j Python driver, tiktoken, Pydantic
 
 ## Quick Start
 
@@ -75,10 +69,18 @@ NEO4J_PASSWORD=password
 # LiteLLM (external service for both LLM and embeddings)
 LITELLM_API_BASE=http://your-litellm-url:4000
 LITELLM_API_KEY=your-litellm-api-key
+DEFAULT_LLM_MODEL=default
 
 # Embedding Configuration (via LiteLLM)
-EMBEDDING_MODEL=Qwen/Qwen3-Embedding-8B
-EMBEDDING_DIMENSIONS=4096
+EMBEDDING_MODEL=text-embedding-3-large
+EMBEDDING_DIMENSIONS=3072
+
+# Or for Qwen embeddings:
+# EMBEDDING_MODEL=Qwen/Qwen3-Embedding-8B
+# EMBEDDING_DIMENSIONS=4096
+
+# PPR-based Traversal (optional)
+ENABLE_PPR_TRAVERSAL=true
 ```
 
 ### 3. Start Services
@@ -120,54 +122,71 @@ uv run python scripts/init_db.py --show-schema
 
 ```
 temporal-knowledge-graphs/
-├── docker-compose.yml              # Services orchestration
+├── docker-compose.yml              # Services orchestration (Neo4j)
 ├── .env.example                    # Environment template
 ├── requirements.txt                # Python dependencies
+├── CLAUDE.md                       # Developer guidance for Claude Code
 │
 ├── src/temporal_kg_rag/           # Core library
-│   ├── config/                    # Configuration management
-│   ├── models/                    # Data models (Pydantic)
-│   ├── graph/                     # Neo4j operations
-│   ├── embeddings/                # Embedding generation
-│   ├── temporal/                  # Temporal query building
-│   ├── ingestion/                 # Document processing
-│   ├── retrieval/                 # Hybrid search
-│   ├── rag/                       # RAG workflow
-│   └── utils/                     # Utilities
+│   ├── config/                    # Configuration management (settings.py)
+│   ├── models/                    # Data models (document, chunk, entity, temporal)
+│   ├── graph/                     # Neo4j operations (client, schema, operations, consolidation)
+│   ├── embeddings/                # Embedding generation via LiteLLM (generator, cache)
+│   ├── temporal/                  # Temporal query building (query_builder, versioning, time_travel)
+│   ├── ingestion/                 # Document processing (loader, chunker, entity_extractor,
+│   │                              #   relation_extractor, entity_deduplication, ectqa_loader, pipeline)
+│   ├── retrieval/                 # Search (vector_search, graph_search, hybrid_search,
+│   │                              #   ppr_traversal, temporal_retrieval, context_expansion)
+│   ├── rag/                       # RAG workflow (chain, graph, prompts, context_builder)
+│   └── utils/                     # Utilities (logger)
 │
 ├── scripts/
 │   ├── init_db.py                 # Database initialization
 │   ├── ingest_documents.py        # Document ingestion CLI
-│   └── sample_data.py             # Generate test data
+│   ├── consolidate_graph.py       # Entity deduplication and graph consolidation
+│   ├── migrate_fiscal_periods.py  # Migrate fiscal period data to chunks
+│   ├── evaluate_tkg.py            # Evaluate TKG answers from JSONL
+│   ├── test_retrieval.py          # Test retrieval methods
+│   ├── test_rag.py                # Test RAG system
+│   ├── run_all_apps.sh            # Start all Streamlit apps
+│   └── stop_all_apps.sh           # Stop all Streamlit apps
 │
-└── apps/                          # Streamlit applications
-    ├── 1_graph_visualization.py   # Graph explorer
-    ├── 2_chunk_retrieval.py       # Search interface
-    └── 3_chatbot.py               # RAG chatbot
+├── apps/                          # Streamlit applications
+│   ├── 1_graph_visualization.py   # Graph explorer (Port 8501)
+│   ├── 2_chunk_retrieval.py       # Search interface (Port 8502)
+│   ├── 3_chatbot.py               # RAG chatbot (Port 8503)
+│   └── 4_visual_search.py         # Visual entity search (Port 8504)
+│
+└── data/                          # Data files (JSONL datasets, evaluation results)
 ```
 
 ## Database Schema
 
 ### Node Labels
 
-- **Document**: Source documents with metadata
-- **Chunk**: Text segments with embeddings
-- **Entity**: Named entities (PERSON, ORG, LOCATION, etc.)
-- **Topic**: Document/chunk topics
-- **TimeSnapshot**: Temporal markers
+- **Document**: Source documents with metadata (`meta_year`, `meta_quarter`, `metadata_json`)
+- **Chunk**: Text segments with embeddings and fiscal period fields (`fiscal_year`, `fiscal_quarter`, `fiscal_period_end`, `is_current`)
+- **Entity**: Named entities (PERSON, ORG, LOCATION, PRODUCT, EVENT, etc.)
 
 ### Key Relationships
 
-- `(Document)-[:HAS_CHUNK]->(Chunk)`
+- `(Document)-[:HAS_CHUNK]->(Chunk)` - Document to chunk relationship
 - `(Chunk)-[:SUPERSEDES]->(Chunk)` - Version history
-- `(Chunk)-[:MENTIONS {valid_from, valid_to}]->(Entity)` - Temporal mentions
-- `(Entity)-[:RELATES_TO {valid_from, valid_to}]->(Entity)` - Entity relationships
+- `(Chunk)-[:MENTIONS {valid_from, valid_to, confidence}]->(Entity)` - Temporal entity mentions
+- `(Entity)-[:RELATES_TO {relationship, timestamp, description, valid_from, valid_to}]->(Entity)` - Semantic entity relationships (temporal quadruples)
+
+### Chunk Properties (Fiscal Period-based Temporal Filtering)
+
+- `fiscal_year`: Integer (e.g., 2021) - The fiscal year the content refers to
+- `fiscal_quarter`: String (e.g., "Q1", "Q2", "Q3", "Q4") - The fiscal quarter
+- `fiscal_period_end`: DateTime - End date of the fiscal period
+- `is_current`: Boolean - Whether this is the current version of the chunk
 
 ### Indexes
 
 - Unique constraints on all node IDs
-- Vector index on `Chunk.embedding` (1536 dimensions, cosine similarity)
-- Performance indexes on temporal fields (created_at, updated_at, is_current)
+- Vector index on `Chunk.embedding` (configurable dimensions: 3072 or 4096, cosine similarity)
+- Performance indexes on fiscal period fields (`fiscal_year`, `fiscal_quarter`, `is_current`)
 - Full-text indexes on Document.title and Chunk.text
 
 ## Usage Examples
@@ -188,20 +207,17 @@ uv run python scripts/init_db.py --verify-only
 ### Document Ingestion
 
 ```bash
-# Generate sample documents for testing
-uv run python scripts/sample_data.py --output-dir ./sample_data
-
 # Ingest a single document
-uv run python scripts/ingest_documents.py --path sample_data/artificial_intelligence_2023.txt
+uv run python scripts/ingest_documents.py --path document.pdf --title "Document Title"
 
 # Ingest all documents in a directory
-uv run python scripts/ingest_documents.py --path sample_data/ --pattern "*.txt"
+uv run python scripts/ingest_documents.py --path docs/ --pattern "*.pdf"
 
-# Ingest with custom metadata
+# Ingest with fiscal period metadata (for temporal filtering)
 uv run python scripts/ingest_documents.py \
-    --path document.pdf \
-    --title "Annual Report 2024" \
-    --metadata '{"author": "Jane Doe", "department": "Engineering"}'
+    --path earnings_call.txt \
+    --title "Q2 2021 Earnings Call" \
+    --metadata '{"year": 2021, "quarter": "Q2", "company": "Skechers"}'
 
 # Ingest recursively with statistics
 uv run python scripts/ingest_documents.py \
@@ -212,6 +228,9 @@ uv run python scripts/ingest_documents.py \
 
 # Quick ingestion (skip entity extraction for speed)
 uv run python scripts/ingest_documents.py --path doc.txt --no-entities
+
+# Ingest ECT-QA dataset (earnings call transcripts)
+# Use the ectqa_loader for JSONL format with fiscal period metadata
 ```
 
 ### Programmatic Usage
@@ -297,42 +316,42 @@ uv run python scripts/test_retrieval.py --query "neural networks" --compare
 from temporal_kg_rag.retrieval.hybrid_search import get_hybrid_search
 from temporal_kg_rag.retrieval.temporal_retrieval import get_temporal_retrieval
 from temporal_kg_rag.retrieval.context_expansion import get_context_expander
+from temporal_kg_rag.retrieval.ppr_traversal import get_ppr_traversal
 from temporal_kg_rag.models.temporal import TemporalFilter
-from datetime import datetime
 
-# Hybrid search (combines vector + graph)
+# Hybrid search (combines vector + graph with RRF)
 hs = get_hybrid_search()
 results = hs.search(
-    query="artificial intelligence",
+    query="quarterly sales performance",
     top_k=10,
 )
 
 # Temporal search with auto-detection
 tr = get_temporal_retrieval()
 temporal_results = tr.search_with_temporal_context(
-    query="AI developments in 2023",
+    query="Skechers revenue in Q2 2021",
     auto_detect_temporal=True,
 )
 
-# Point-in-time search
-point_in_time_results = tr.search_at_time(
-    query="quantum computing",
-    timestamp=datetime(2023, 12, 31),
-    top_k=5,
+# Fiscal period-based search
+fiscal_filter = TemporalFilter.create_fiscal_period(year=2021, quarter="Q2")
+filtered_results = hs.search(
+    query="revenue growth",
+    top_k=10,
+    temporal_filter=fiscal_filter,
 )
+
+# Fiscal range search
+range_filter = TemporalFilter.create_fiscal_range(start_year=2020, end_year=2022)
+range_results = hs.search(query="financial performance", top_k=10, temporal_filter=range_filter)
+
+# PPR-based graph traversal (if enabled)
+ppr = get_ppr_traversal()
+ppr_results = ppr.search(seed_entities=["Skechers", "revenue"], top_k=10)
 
 # Expand results with context
 ce = get_context_expander()
-expanded = ce.expand_results(
-    results,
-    include_neighboring_chunks=True,
-    include_entities=True,
-    neighboring_chunk_window=1,
-)
-
-# Get context summary for RAG
-context_summary = ce.build_context_summary(expanded)
-print(context_summary)
+expanded = ce.expand_results(results, include_neighboring_chunks=True, include_entities=True)
 ```
 
 ### RAG System
@@ -402,16 +421,17 @@ print(f"Verified: {result['metadata']['verified']}")
 
 ### Web Applications
 
-The project includes three Streamlit applications for easy interaction with the system:
+The project includes four Streamlit applications for easy interaction with the system:
 
 ```bash
 # Quick start - run all apps at once
 ./scripts/run_all_apps.sh
 
 # Or run individually:
-streamlit run apps/1_graph_visualization.py                    # Port 8501
-streamlit run apps/2_chunk_retrieval.py --server.port 8502     # Port 8502
-streamlit run apps/3_chatbot.py --server.port 8503              # Port 8503
+uv run streamlit run apps/1_graph_visualization.py                    # Port 8501
+uv run streamlit run apps/2_chunk_retrieval.py --server.port 8502     # Port 8502
+uv run streamlit run apps/3_chatbot.py --server.port 8503             # Port 8503
+uv run streamlit run apps/4_visual_search.py --server.port 8504       # Port 8504
 
 # Stop all apps
 ./scripts/stop_all_apps.sh
@@ -439,6 +459,11 @@ streamlit run apps/3_chatbot.py --server.port 8503              # Port 8503
 - Export conversations
 - Streaming responses (LangChain mode)
 
+**Application 4: Visual Search Interface** (Port 8504)
+- Visual entity-based search
+- Interactive graph exploration
+- Entity relationship visualization
+
 See [apps/README.md](apps/README.md) for detailed documentation.
 
 ### Using Configuration
@@ -449,7 +474,9 @@ from temporal_kg_rag.config.settings import get_settings
 settings = get_settings()
 print(f"Neo4j URI: {settings.neo4j_uri}")
 print(f"Chunk size: {settings.chunk_size}")
-print(f"Embedding model: {settings.openai_embedding_model}")
+print(f"Embedding model: {settings.embedding_model}")
+print(f"Embedding dimensions: {settings.embedding_dimensions}")
+print(f"PPR enabled: {settings.enable_ppr_traversal}")
 ```
 
 ## Configuration
@@ -460,38 +487,65 @@ All configuration is managed through environment variables (see `.env.example`):
 |----------|-------------|---------|
 | `NEO4J_URI` | Neo4j connection URI | bolt://localhost:7687 |
 | `NEO4J_PASSWORD` | Neo4j password | password |
-| `OPENAI_API_KEY` | OpenAI API key | (required) |
-| `OPENAI_EMBEDDING_MODEL` | Embedding model | text-embedding-3-small |
+| `LITELLM_API_BASE` | LiteLLM proxy URL | http://localhost:4000 |
+| `LITELLM_API_KEY` | LiteLLM API key | sk-1234 |
+| `DEFAULT_LLM_MODEL` | Default LLM model | default |
+| `EMBEDDING_MODEL` | Embedding model | text-embedding-3-large |
+| `EMBEDDING_DIMENSIONS` | Embedding vector size | 3072 |
 | `CHUNK_SIZE` | Chunk size in tokens | 1000 |
 | `CHUNK_OVERLAP` | Overlap between chunks | 100 |
-| `HYBRID_SEARCH_ALPHA` | Vector vs graph weight | 0.5 |
+| `HYBRID_SEARCH_ALPHA` | Vector vs graph weight (0=graph, 1=vector) | 0.5 |
+| `ENABLE_PPR_TRAVERSAL` | Enable Personalized PageRank | true |
+| `ENABLE_EMBEDDING_CACHE` | Enable embedding caching | true |
+| `VECTOR_SIMILARITY_THRESHOLD` | Minimum similarity score | 0.7 |
 
 ## Development
 
 ### Running Tests
 
 ```bash
-# Install development dependencies
-pip install -e ".[dev]"
-
 # Run tests
-pytest
+uv run pytest
 
 # Run tests with coverage
-pytest --cov=src/temporal_kg_rag
+uv run pytest --cov=src/temporal_kg_rag
 ```
 
 ### Code Formatting
 
 ```bash
 # Format code with black
-black src/ tests/ scripts/
+uv run black src/ tests/ scripts/ apps/
 
 # Lint with ruff
-ruff check src/ tests/ scripts/
+uv run ruff check src/ tests/ scripts/ apps/
 
 # Type checking with mypy
-mypy src/
+uv run mypy src/
+```
+
+### Data Migration
+
+If you need to update existing data (e.g., after adding new chunk fields):
+
+```bash
+# Migrate fiscal period data from documents to chunks
+uv run python scripts/migrate_fiscal_periods.py --verify    # Check current state
+uv run python scripts/migrate_fiscal_periods.py --dry-run   # Preview changes
+uv run python scripts/migrate_fiscal_periods.py             # Apply migration
+
+# Consolidate entities (deduplication)
+uv run python scripts/consolidate_graph.py --dry-run
+uv run python scripts/consolidate_graph.py
+```
+
+### Evaluation
+
+```bash
+# Evaluate TKG answers from JSONL dataset
+uv run python scripts/evaluate_tkg.py --input data/questions.jsonl --output data/evaluated.jsonl
+uv run python scripts/evaluate_tkg.py --input data/questions.jsonl --output data/evaluated.jsonl --limit 10
+uv run python scripts/evaluate_tkg.py --comparison-only --input data/questions.jsonl --output data/evaluated.jsonl
 ```
 
 ## Troubleshooting
@@ -522,22 +576,51 @@ YIELD name, type, state
 WHERE name = 'chunk_embeddings'
 RETURN name, type, state
 """
-result = client.execute_query(query)
+result = client.execute_read_transaction(query, {})
 print(result)
+```
+
+### Dimension Mismatch Errors
+
+If you see vector dimension errors, your embeddings don't match the vector index:
+
+```bash
+# Re-initialize database with correct dimensions
+uv run python scripts/init_db.py --force
+
+# Re-ingest all documents
+uv run python scripts/ingest_documents.py --path your_docs/
+```
+
+### LiteLLM Connection Issues
+
+```bash
+# Check if LiteLLM is accessible
+curl $LITELLM_API_BASE/health
+```
+
+### Missing Fiscal Period Data
+
+If temporal queries return no results, chunks may be missing fiscal period fields:
+
+```bash
+# Check and migrate fiscal period data
+uv run python scripts/migrate_fiscal_periods.py --verify
+uv run python scripts/migrate_fiscal_periods.py --show-docs
+uv run python scripts/migrate_fiscal_periods.py
 ```
 
 ### Python Import Issues
 
-Make sure you're in the project root and have activated your virtual environment:
+With `uv`, you don't need to manually set PYTHONPATH:
 
 ```bash
-# Add src to PYTHONPATH
+# Use uv run for all commands
+uv run python scripts/init_db.py
+
+# Or add src to PYTHONPATH manually
 export PYTHONPATH="${PYTHONPATH}:$(pwd)/src"
-
-# Or install in development mode
-pip install -e .
 ```
-
 
 ## License
 
